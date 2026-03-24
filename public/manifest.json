@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "test-Pal - Flashcard Companion",
+  "version": "1.0.0",
+  "description": "Quick flashcard quizzes for your courses.",
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "public/vite.svg"
+  },
+  "permissions": ["storage"],
+  "icons": {
+    "128": "public/vite.svg"
+  }
+}
