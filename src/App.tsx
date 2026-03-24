@@ -100,6 +100,28 @@ const App = () => {
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Theme Awareness
+  useEffect(() => {
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+
+    const listener = (e: MediaQueryListEvent) => {
+      if (e.matches) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    };
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, []);
 
   // Active Subject State
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -395,44 +417,44 @@ Output strictly in this JSON format:
   );
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30">
-      <div className="max-w-md mx-auto min-h-screen flex flex-col bg-card/30 shadow-[0_0_100px_-30px_rgba(0,0,0,0.1)] relative overflow-hidden ring-1 ring-border/5">
+    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/30 transition-colors duration-300">
+      <div className="min-h-screen flex flex-col relative overflow-hidden">
         
         {/* Header */}
-        <header className="p-4 bg-background/60 backdrop-blur-xl border-b border-border/5 sticky top-0 z-50">
-          <div className="flex justify-between items-center h-12">
+        <header className="px-6 py-6 bg-background sticky top-0 z-50 transition-all duration-300">
+          <div className="flex justify-between items-center h-14">
             <div className="flex items-center gap-3">
               {view !== 'dashboard' && (
                 <button 
                   onClick={() => setView('dashboard')} 
-                  className="p-2 hover:bg-secondary active:scale-90 rounded-full transition-all"
+                  className="p-3 bg-secondary/40 dark:bg-muted/30 hover:bg-secondary active:scale-90 rounded-full transition-all"
                 >
                   <ArrowLeftIcon size={20} className="text-muted-foreground" />
                 </button>
               )}
               <div>
-                <h1 className="text-[17px] font-bold tracking-tight truncate max-w-[180px]">
+                <h1 className="text-[18px] font-black tracking-tight truncate max-w-[180px]">
                   {view === 'dashboard' ? 'test-Pal Sync' : subjects.find(s => s.id === activeSubjectId)?.name || 'Course'}
                 </h1>
-                <div className="flex items-center gap-1.5">
-                  <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isSaving ? "bg-warning" : "bg-success")} />
-                  <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-                    {isSaving ? 'Syncing...' : 'Encrypted & Secure'}
+                <div className="flex items-center gap-2">
+                  <div className={cn("w-2 h-2 rounded-full animate-pulse", isSaving ? "bg-warning" : "bg-primary")} />
+                  <p className="text-[10px] text-muted-foreground font-black uppercase tracking-wider">
+                    {isSaving ? 'Active Transfer' : 'Encrypted Library'}
                   </p>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               {view === 'dashboard' && (
                 <button 
                   onClick={() => setShowPromptModal(true)}
-                  className="p-2.5 bg-secondary hover:bg-secondary/80 text-primary rounded-xl border border-border transition-all active:scale-95 shadow-sm"
+                  className="p-3.5 bg-secondary dark:bg-card hover:bg-secondary/80 text-primary rounded-[1.25rem] transition-all active:scale-95 shadow-lg"
                   title="AI Prompt Generator"
                 >
-                  <TerminalWindowIcon size={18} />
+                  <TerminalWindowIcon size={20} />
                 </button>
               )}
-              <div className="w-9 h-9 bg-primary rounded-xl flex items-center justify-center text-xs font-bold text-primary-foreground shadow-lg shadow-primary/20 ring-1 ring-primary/20">
+              <div className="w-11 h-11 bg-primary rounded-full flex items-center justify-center text-xs font-black text-primary-foreground shadow-2xl shadow-primary/10">
                 {user.email ? user.email[0].toUpperCase() : 'U'}
               </div>
             </div>
@@ -455,21 +477,22 @@ Output strictly in this JSON format:
                 </div>
               </div>
 
-              <div className="px-4 space-y-1">
-                <div className="px-2 pt-4 pb-2">
+              <div className="px-4 space-y-2">
+                <div className="px-2 pt-2 pb-6">
                   <div className="relative group">
-                    <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={16} />
+                    <div className="absolute inset-0 bg-secondary/40 dark:bg-muted rounded-full pointer-events-none" />
+                    <MagnifyingGlassIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={20} />
                     <input 
                       type="text"
-                      placeholder="Search your library..."
+                      placeholder="Search for subjects & library..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full bg-secondary/30 border border-border rounded-2xl py-3.5 pl-11 pr-4 text-sm focus:outline-none focus:bg-background focus:ring-2 focus:ring-primary/10 transition-all placeholder:text-muted-foreground/60"
+                      className="w-full bg-transparent border-none rounded-full py-5 pl-14 pr-6 text-[16px] font-black focus:ring-0 transition-all placeholder:text-muted-foreground/30 relative z-10"
                     />
                   </div>
                 </div>
 
-                <div className="py-2">
+                <div className="py-2 space-y-3">
                   {filteredSubjects.length === 0 ? (
                     <div className="text-center py-20 animate-in fade-in duration-1000">
                       <div className="w-16 h-16 bg-secondary/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-border">
@@ -489,33 +512,33 @@ Output strictly in this JSON format:
                           key={subject.id} 
                           onClick={() => selectSubject(subject)}
                           style={{ animationDelay: `${idx * 50}ms` }}
-                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-4 p-4 hover:bg-secondary/80 rounded-[1.5rem] transition-all cursor-pointer active:scale-[0.98] group relative overflow-hidden mb-3 bg-secondary/20 shadow-sm hover:shadow-md"
+                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-6 p-6 bg-secondary/30 dark:bg-card hover:bg-secondary/50 dark:hover:bg-accent/40 rounded-[2.5rem] transition-all cursor-pointer active:scale-[0.96] group relative shadow-lg hover:shadow-2xl mb-5"
                         >
                           <div className={cn(
-                            "w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 transition-all duration-500",
-                            dueCount > 0 ? "bg-warning/10 shadow-lg shadow-warning/5" : "bg-card shadow-sm group-hover:bg-primary/5"
+                            "w-16 h-16 rounded-[1.5rem] flex items-center justify-center shrink-0 transition-all duration-500 shadow-inner",
+                            dueCount > 0 ? "bg-warning/20" : "bg-background/80 dark:bg-muted"
                           )}>
                             {dueCount > 0 ? (
                               <div className="relative">
                                 <ClockIcon size={26} className="text-warning animate-pulse" />
-                                <span className="absolute -top-1 -right-1 w-3 h-3 bg-destructive border-2 border-background rounded-full" />
+                                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-destructive border-4 border-background rounded-full" />
                               </div>
                             ) : <GraduationCapIcon size={26} className={cn("transition-colors", mastery > 80 ? "text-success" : "text-primary")} />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="text-[15px] font-bold text-foreground truncate group-hover:text-primary transition-colors">{subject.name}</h4>
-                            <div className="flex items-center gap-3 mt-1.5">
-                              <div className="flex-1 bg-secondary h-1.5 rounded-full overflow-hidden border border-border/50">
+                            <h4 className="text-[16px] font-black text-foreground truncate group-hover:text-primary transition-colors tracking-tight">{subject.name}</h4>
+                            <div className="flex items-center gap-3 mt-2">
+                              <div className="flex-1 bg-background/50 dark:bg-muted h-2.5 rounded-full overflow-hidden">
                                 <div 
-                                  className={cn("h-full transition-all duration-1000", mastery > 80 ? "bg-success" : "bg-primary")} 
+                                  className={cn("h-full transition-all duration-1000 shadow-sm", mastery > 80 ? "bg-success" : "bg-primary")} 
                                   style={{ width: `${mastery}%` }}
                                 ></div>
                               </div>
-                              <span className="text-[10px] font-black text-muted-foreground/80 shrink-0 tabular-nums">{mastery}%</span>
+                              <span className="text-[11px] font-black text-muted-foreground/80 shrink-0 tabular-nums lowercase">{mastery}% master</span>
                             </div>
-                            {dueCount > 0 && <p className="text-[10px] font-bold text-warning uppercase mt-1 tracking-widest">{dueCount} review items ready</p>}
+                            {dueCount > 0 && <p className="text-[10px] font-black text-warning uppercase mt-2.5 tracking-[0.1em]">{dueCount} reviews pending</p>}
                           </div>
-                          <button onClick={(e) => deleteSubject(e, subject.id)} className="p-2 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90">
+                          <button onClick={(e) => deleteSubject(e, subject.id)} className="p-3 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-full">
                             <TrashIcon size={18} />
                           </button>
                         </div>
@@ -566,18 +589,21 @@ Output strictly in this JSON format:
               </div>
 
               {currentQ ? (
-                <div className="space-y-6 pb-20">
-                  <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <span className="px-2.5 py-1 bg-secondary text-[10px] font-bold text-muted-foreground rounded-lg uppercase tracking-wider">UNIT {currentQ.unit || 'A'}</span>
-                      <span className="px-2.5 py-1 bg-primary/10 text-[10px] font-bold text-primary rounded-lg uppercase tracking-wider">Box {currentQ.srsBox || 0}</span>
+                <div className="space-y-8 pb-20">
+                  <div className="bg-secondary/40 dark:bg-card/60 rounded-[2.5rem] p-8 md:p-10 shadow-2xl shadow-primary/5 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-40 h-40 bg-primary/5 rounded-full -mr-20 -mt-20 blur-3xl opacity-50" />
+                    <div className="relative z-10 space-y-5">
+                      <div className="flex gap-2">
+                        <span className="px-4 py-1.5 bg-primary/15 text-[10px] font-black text-primary rounded-full uppercase tracking-widest">UNIT {currentQ.unit || 'A'}</span>
+                        <span className="px-4 py-1.5 bg-background/50 dark:bg-muted/40 text-[10px] font-black text-muted-foreground rounded-full uppercase tracking-widest">SRS Box {currentQ.srsBox || 0}</span>
+                      </div>
+                      <h2 className="text-xl md:text-2xl font-black leading-tight text-foreground tracking-tight">
+                        {currentQ.q}
+                      </h2>
                     </div>
-                    <h2 className="text-[19px] font-medium leading-relaxed text-foreground">
-                      {currentQ.q}
-                    </h2>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="grid gap-4">
                     {currentQ.options && currentQ.options.map((opt, i) => {
                       const isCorrect = i === currentQ.correct;
                       const isSelected = selectedOption === i;
@@ -589,20 +615,26 @@ Output strictly in this JSON format:
                           onClick={() => handleAnswer(i)} 
                           disabled={hasAnswered} 
                           className={cn(
-                            "w-full text-left p-4 rounded-xl border transition-all duration-200 text-[15px] flex items-start",
-                            !hasAnswered ? "bg-card border-border hover:border-primary/50 active:bg-secondary" :
-                            isCorrect ? "bg-success/10 border-success text-success" :
-                            isSelected ? "bg-destructive/10 border-destructive text-destructive" :
-                            "bg-transparent border-border opacity-40"
+                            "w-full text-left p-6 rounded-[2rem] transition-all duration-300 active:scale-[0.98] flex items-center group relative overflow-hidden shadow-sm",
+                            !hasAnswered ? "bg-secondary/25 hover:bg-secondary/40 dark:hover:bg-card/40" :
+                            isCorrect ? "bg-success/20 shadow-lg shadow-success/10" :
+                            isSelected ? "bg-destructive/20 shadow-lg shadow-destructive/10" :
+                            "bg-transparent opacity-40"
                           )}
                         >
-                          <span className={cn(
-                            "w-6 h-6 shrink-0 flex items-center justify-center rounded-md font-bold mr-3 text-xs",
-                            hasAnswered && isCorrect ? 'bg-success text-success-foreground' : 'bg-secondary text-muted-foreground'
+                          <div className={cn(
+                            "w-11 h-11 shrink-0 flex items-center justify-center rounded-2xl font-black mr-5 text-sm transition-all duration-500 shadow-inner",
+                            !hasAnswered ? "bg-card dark:bg-background text-muted-foreground group-hover:bg-primary/5 group-hover:text-primary" :
+                            isCorrect ? "bg-success text-white scale-110 rotate-3 shadow-xl" : 
+                            isSelected ? "bg-destructive text-white scale-110" : "bg-card/50 dark:bg-background/50 text-muted-foreground"
                           )}>
                             {String.fromCharCode(65+i)}
-                          </span>
-                          <span className="leading-snug">{opt}</span>
+                          </div>
+                          <span className={cn(
+                            "flex-1 text-[16px] font-black leading-relaxed",
+                            hasAnswered && isCorrect ? "text-success" : "text-foreground"
+                          )}>{opt}</span>
+                          {hasAnswered && isCorrect && <CheckCircleIcon size={26} weight="fill" className="text-success animate-in zoom-in-50 duration-500 ml-4" />}
                         </button>
                       );
                     })}
