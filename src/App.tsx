@@ -174,7 +174,7 @@ Output strictly in this JSON format:
   // 2. Fetch Subjects List
   useEffect(() => {
     if (!user) return;
-    const subjectsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'subjects');
+    const subjectsRef = collection(db, 'artifacts', appId, 'subjects');
     const unsubscribe = onSnapshot(subjectsRef, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subject));
       setSubjects(list);
@@ -244,7 +244,7 @@ Output strictly in this JSON format:
         }));
 
         const subjectId = `subject_${Date.now()}`;
-        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid!, 'subjects', subjectId), {
+        await setDoc(doc(db, 'artifacts', appId, 'subjects', subjectId), {
           name: subjectName,
           questions: questionsToSave,
           createdAt: Date.now(),
@@ -257,10 +257,10 @@ Output strictly in this JSON format:
   };
 
   const saveActiveSubject = async (updatedQuestions: Question[]) => {
-    if (!user || !activeSubjectId) return;
+    if (!activeSubjectId) return;
     setIsSaving(true);
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'subjects', activeSubjectId), {
+      await setDoc(doc(db, 'artifacts', appId, 'subjects', activeSubjectId), {
         questions: updatedQuestions,
         lastUpdated: Date.now()
       }, { merge: true });
@@ -337,9 +337,8 @@ Output strictly in this JSON format:
 
   const deleteSubject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!user) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'subjects', id));
+      await deleteDoc(doc(db, 'artifacts', appId, 'subjects', id));
       if (activeSubjectId === id) {
         setView('dashboard');
         setActiveSubjectId(null);
