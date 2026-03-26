@@ -41,8 +41,6 @@ import {
   CircleNotchIcon,
   CopyIcon,
   LightningSlashIcon,
-  SpeakerHighIcon,
-  SpeakerSlashIcon,
   cn
 } from './lib/icons/phosphor';
 import ReadingTrainer from './ReadingTrainer';
