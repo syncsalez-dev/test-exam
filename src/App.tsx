@@ -1284,7 +1284,23 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
   useEffect(() => {
     if (!isPlaying || currentIdx >= words.length) return;
     
-    const interval = 60000 / speed;
+    const currentWord = words[currentIdx];
+    let multiplier = 1;
+
+    // Sentence ends: long pause
+    if (/[.!?]$/.test(currentWord)) {
+      multiplier = 2.2;
+    } 
+    // Clauses/Middle marks: medium pause
+    else if (/[,;:]$/.test(currentWord)) {
+      multiplier = 1.6;
+    }
+    // Long words: slight pause
+    else if (currentWord.length > 8) {
+      multiplier = 1.2;
+    }
+
+    const interval = (60000 / speed) * multiplier;
     const timer = setTimeout(() => {
       setCurrentIdx(prev => prev + 1);
     }, interval);
