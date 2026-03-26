@@ -141,7 +141,12 @@ const App = () => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null); // New feedback state
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [readingTrainerActive, setReadingTrainerActive] = useState(false);
+  const [trainingText, setTrainingText] = useState<string>('');
+  const [trainingProgress, setTrainingProgress] = useState<{currentDay: number, lastDate: number, sessions: number}>({currentDay: 1, lastDate: 0, sessions: 0});
+  const [wpm] = useState(180);
+  const [dashboardTab, setDashboardTab] = useState<'exam' | 'mindfulness'>('exam');
 
   // Timer States
   const [quizTimer, setQuizTimer] = useState(QUESTION_TIMEOUT);
@@ -383,6 +388,11 @@ Output strictly in this JSON format:
     setQuestions(updatedQuestions);
     setShowExplanation(true);
 
+    // Update Achievement Progress for Reading Trainer
+    if (readingTrainerActive) {
+      // Check if we reached the end of the text already
+    }
+
     // Update Streak & Activity
     if (activeSubjectId) {
       const subject = subjects.find(s => s.id === activeSubjectId);
@@ -579,24 +589,93 @@ Output strictly in this JSON format:
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto scroll-smooth">
+        <main className="flex-1 overflow-y-auto no-scrollbar pb-32">
           {view === 'dashboard' ? (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 pb-10">
-              <div className="px-6 pt-6 pb-4">
-                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
-                  <div className="bg-secondary/40 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap shadow-sm">
-                    <StackIcon size={14} className="text-primary" />
-                    <span className="text-[11px] font-bold uppercase tracking-wider">{subjects.length} Subjects</span>
-                  </div>
-                  <div className="bg-success/10 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap shadow-sm">
-                    <ActivityIcon size={14} className="text-success" />
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-success">Real-time Sync</span>
-                  </div>
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-2xl mx-auto w-full px-5 md:px-8 py-4">
+              <div className="flex flex-col gap-0.5 mb-4">
+                <h2 className="text-xl md:text-2xl font-black text-foreground tracking-tighter uppercase italic">Control Center</h2>
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-[0.2em] opacity-30">SyncSale Intelligence • v2.0</p>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto pb-3 scrollbar-none no-scrollbar opacity-50">
+                <div className="bg-secondary/40 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap shadow-sm">
+                  <StackIcon size={14} className="text-primary" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider">{subjects.length} Subjects</span>
+                </div>
+                <div className="bg-success/10 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap shadow-sm">
+                  <ActivityIcon size={14} className="text-success" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-success">Real-time Sync</span>
                 </div>
               </div>
 
-              <div className="px-4 space-y-2">
-                <div className="px-2 pt-2 pb-6">
+              {/* Dashboard Tabs */}
+              <div className="flex gap-1 p-1 bg-secondary/5 dark:bg-muted/10 rounded-full mb-6 w-full border border-border/5">
+                <button 
+                  onClick={() => setDashboardTab('exam')}
+                  className={cn(
+                    "flex-1 px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-widest transition-all duration-500",
+                    dashboardTab === 'exam' ? "bg-primary text-primary-foreground shadow-lg shadow-primary/10" : "text-muted-foreground hover:bg-secondary/10"
+                  )}
+                >
+                  Library
+                </button>
+                <button 
+                  onClick={() => setDashboardTab('mindfulness')}
+                  className={cn(
+                    "flex-1 px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-widest transition-all duration-500",
+                    dashboardTab === 'mindfulness' ? "bg-primary text-primary-foreground shadow-lg shadow-primary/10" : "text-muted-foreground hover:bg-secondary/10"
+                  )}
+                >
+                  Mindfulness
+                </button>
+              </div>
+
+                {dashboardTab === 'mindfulness' ? (
+                  <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="p-5 md:p-8 bg-primary/5 rounded-2xl md:rounded-[2rem] relative overflow-hidden group shadow-lg shadow-primary/5">
+                      <div className="absolute top-0 right-0 p-12 opacity-[0.03] rotate-12 group-hover:rotate-0 transition-transform duration-700">
+                        <BrainIcon size={200} weight="fill" />
+                      </div>
+                      <div className="relative z-10 flex flex-col gap-10">
+                        <div className="flex items-center gap-5">
+                          <div className="p-4 bg-primary/10 rounded-2xl">
+                            <LightningIcon size={28} className="text-primary" />
+                          </div>
+                          <span className="text-xs font-black uppercase tracking-[0.3em] text-primary">Mindful Reading Trainer</span>
+                        </div>
+                        <div className="space-y-3">
+                          <h3 className="text-3xl font-black text-foreground tracking-tighter">7-Day Focus Challenge</h3>
+                          <p className="text-sm text-muted-foreground font-medium max-w-[320px] leading-relaxed opacity-70">
+                            Retrain your brain to process one word at a time. Day <span className="text-primary font-black">{trainingProgress.currentDay}</span> of 7.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-8 pt-6">
+                           <div className="flex-1 h-3 bg-secondary/30 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-primary transition-all duration-1000 shadow-[0_0_15px_rgba(var(--primary),0.3)]" 
+                                style={{ width: `${(trainingProgress.currentDay / 7) * 100}%` }}
+                              />
+                           </div>
+                           <button 
+                             onClick={() => {
+                               const allQs = subjects.flatMap(s => s.questions);
+                               const trainingQ = allQs[Math.floor(Math.random() * allQs.length)];
+                               if (trainingQ) {
+                                 setTrainingText(trainingQ.q + " " + trainingQ.explanation);
+                                 setReadingTrainerActive(true);
+                               }
+                             }}
+                             className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black text-xs uppercase tracking-widest shadow-2xl shadow-primary/40 active:scale-95 transition-all"
+                           >
+                             {trainingProgress.sessions > 0 ? 'Continue' : 'Start Day'}
+                           </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="pt-0 pb-0">
                   <div className="relative group">
                     <div className="absolute inset-0 bg-secondary/40 dark:bg-muted rounded-full pointer-events-none" />
                     <MagnifyingGlassIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={20} />
@@ -610,9 +689,9 @@ Output strictly in this JSON format:
                   </div>
                 </div>
 
-                <div className="py-2 space-y-3">
+                <div className="py-0 space-y-1">
                   {filteredSubjects.length === 0 ? (
-                    <div className="text-center py-20 animate-in fade-in duration-1000">
+                    <div className="text-center py-12 animate-in fade-in duration-1000">
                       <div className="w-16 h-16 bg-secondary/50 rounded-full flex items-center justify-center mx-auto mb-4 border border-border">
                         <BookOpenIcon size={24} className="text-muted-foreground/40" />
                       </div>
@@ -630,7 +709,7 @@ Output strictly in this JSON format:
                           key={subject.id} 
                           onClick={() => selectSubject(subject)}
                           style={{ animationDelay: `${idx * 50}ms` }}
-                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-3 md:gap-4 p-3 md:p-4 bg-secondary/30 dark:bg-card hover:bg-secondary/50 dark:hover:bg-accent/40 rounded-xl md:rounded-2xl transition-all cursor-pointer active:scale-[0.98] group relative shadow-md hover:shadow-xl mb-3 md:mb-4 border border-border/50"
+                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-3.5 p-3.5 md:p-4 bg-secondary/15 dark:bg-card hover:bg-secondary/25 dark:hover:bg-accent/40 rounded-xl md:rounded-2xl transition-all cursor-pointer active:scale-[0.99] group relative shadow-sm mb-1"
                         >
                           <div className={cn(
                             "w-12 h-12 md:w-14 md:h-14 rounded-lg md:rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 shadow-inner",
@@ -671,39 +750,40 @@ Output strictly in this JSON format:
                                 setStudyConfig(subject.config || { focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
                                 setShowSettingsModal(true);
                               }}
-                              className="p-2 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-lg border border-border/20"
+                              className="p-3 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all active:scale-90 bg-background/60 dark:bg-muted/60 rounded-xl"
                             >
-                              <GearIcon size={16} />
+                              <GearIcon size={18} />
                             </button>
-                            <button onClick={(e) => deleteSubject(e, subject.id)} className="p-2 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-lg border border-border/20">
-                              <TrashIcon size={16} />
+                            <button onClick={(e) => deleteSubject(e, subject.id)} className="p-3 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90 bg-background/60 dark:bg-muted/60 rounded-xl">
+                              <TrashIcon size={18} />
                             </button>
                           </div>
                         </div>
                       );
                     })
                   )}
-                </div>
+                  </div>
 
-                <div className="px-2 pt-6">
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="group w-full py-6 md:py-8 bg-secondary/15 hover:bg-secondary/30 rounded-[1.5rem] md:rounded-[2.5rem] flex flex-col items-center justify-center gap-3 transition-all active:scale-[0.97] border-2 border-dashed border-border/10"
-                  >
-                    <div className="w-12 h-12 bg-background rounded-full shadow-sm flex items-center justify-center group-hover:text-primary transition-colors">
-                      <PlusIcon size={20} />
-                    </div>
-                    <span className="text-xs font-bold uppercase tracking-widest">Add Course Subject</span>
-                    <p className="text-[10px] text-muted-foreground font-medium">Supports Flashcard JSON format</p>
-                    <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleFileUpload} />
-                  </button>
+                  <div className="pt-4">
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="group w-full py-6 md:py-8 bg-secondary/10 hover:bg-secondary/15 rounded-2xl md:rounded-3xl flex flex-col items-center justify-center gap-2 transition-all active:scale-[0.98] border-none shadow-sm"
+                    >
+                      <div className="w-10 h-10 bg-background rounded-full shadow-sm flex items-center justify-center group-hover:text-primary transition-colors">
+                        <PlusIcon size={18} />
+                      </div>
+                      <span className="text-[9px] font-black uppercase tracking-widest">Add Course Subject</span>
+                      <p className="text-[10px] text-muted-foreground font-medium opacity-60">Flashcard JSON format</p>
+                      <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleFileUpload} />
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : view === 'quiz' ? (
             <div className="p-6 animate-in slide-in-from-right duration-300 h-full flex flex-col relative">
               {/* Session Metrics Bar */}
-              <div className="flex items-center justify-between mb-8 animate-in fade-in duration-700">
+              <div className="flex items-center justify-between mb-4 animate-in fade-in duration-700">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.15em]">Daily Goal</span>
@@ -717,20 +797,36 @@ Output strictly in this JSON format:
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.15em]">Timer</span>
-                    <span className={cn("text-xs font-black tabular-nums", quizTimer <= 5 ? 'text-destructive' : 'text-primary')}>
-                      {quizTimer}s
-                    </span>
+                 <div className="flex items-center gap-4">
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.15em]">Timer</span>
+                      <span className={cn("text-xs font-black tabular-nums", quizTimer <= 5 ? 'text-destructive' : 'text-primary')}>
+                        {quizTimer}s
+                      </span>
+                    </div>
+                    <div className="bg-success/10 px-3 py-2 rounded-xl border border-success/20 flex items-center gap-2">
+                      <TrendUpIcon size={14} className="text-success" />
+                      <span className="text-[11px] font-black text-success uppercase">
+                        {subjects.find(s => s.id === activeSubjectId)?.streak || 0}
+                      </span>
+                    </div>
+                    <div className="w-px h-8 bg-border/40 mx-1" />
+                    <button 
+                      onClick={() => {
+                        if (currentQ) {
+                          setTrainingText(currentQ.q + " . . . " + currentQ.explanation);
+                          setReadingTrainerActive(true);
+                        }
+                      }}
+                      className="group p-2.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl transition-all active:scale-90 relative"
+                    >
+                      <BrainIcon size={18} weight="fill" className="animate-pulse" />
+                      <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-[8px] font-black px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-xl z-20">TRAIN MIND</div>
+                    </button>
+                    <button onClick={() => setView('dashboard')} className="p-2.5 bg-secondary/80 hover:bg-secondary text-muted-foreground rounded-xl transition-all active:scale-90">
+                      <XIcon size={18} />
+                    </button>
                   </div>
-                  <div className="bg-success/10 px-3 py-2 rounded-xl border border-success/20 flex items-center gap-2">
-                    <TrendUpIcon size={14} className="text-success" />
-                    <span className="text-[11px] font-black text-success uppercase">
-                      {subjects.find(s => s.id === activeSubjectId)?.streak || 0}
-                    </span>
-                  </div>
-                </div>
               </div>
 
               <div className="mb-8">
@@ -995,7 +1091,7 @@ Output strictly in this JSON format:
                   </div>
                   <h3 className="text-sm font-bold text-foreground lowercase tracking-tight">AI Data Generator</h3>
                 </div>
-                <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-secondary rounded-full text-muted-foreground">
+                <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-secondary rounded-full text-muted-foreground transition-all">
                   <XIcon size={20} />
                 </button>
               </div>
@@ -1053,7 +1149,7 @@ Output strictly in this JSON format:
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between bg-secondary/40 rounded-2xl border border-border/50 p-4">
+                <div className="flex items-center justify-between bg-secondary/40 rounded-2xl p-5 shadow-sm">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest text-primary">Curriculum Shuffle</span>
                     <span className="text-[11px] font-bold text-foreground opacity-60">Randomize question order</span>
@@ -1106,7 +1202,7 @@ Output strictly in this JSON format:
 
         {/* Bottom Navigation */}
         {view !== 'dashboard' && !examActive && (
-          <nav className="flex items-center justify-around h-20 px-4 bg-card/80 backdrop-blur-md border-t border-border sticky bottom-0 z-50 shadow-2xl">
+          <nav className="flex items-center justify-around h-16 px-4 bg-card/80 backdrop-blur-md sticky bottom-0 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.1)]">
              <button onClick={() => setView('quiz')} className={cn(
                "flex-1 flex flex-col items-center gap-1.5 transition-all group",
                view === 'quiz' ? 'text-primary' : 'text-muted-foreground'
@@ -1145,6 +1241,125 @@ Output strictly in this JSON format:
              </button>
           </nav>
         )}
+        {/* Mindful Reading Trainer Overlay */}
+        {readingTrainerActive && (
+          <ReadingTrainer 
+            text={trainingText} 
+            wpm={wpm} 
+            onClose={() => setReadingTrainerActive(false)}
+            onFinish={() => {
+              // Log progress
+              const today = new Date().toDateString();
+              const newProgress = { ...trainingProgress };
+              if (new Date(newProgress.lastDate).toDateString() !== today) {
+                newProgress.sessions += 1;
+                newProgress.lastDate = Date.now();
+                if (newProgress.sessions >= 3) { // 3 sessions per day to advance
+                  newProgress.currentDay = Math.min(7, newProgress.currentDay + 1);
+                  newProgress.sessions = 0;
+                }
+              } else {
+                newProgress.sessions += 1;
+              }
+              setTrainingProgress(newProgress);
+              setReadingTrainerActive(false);
+              // Save to Firestore
+              setDoc(doc(db, 'artifacts', appId, 'user', 'metadata'), { readingTraining: newProgress }, { merge: true });
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- SUBSIDIARY COMPONENTS ---
+
+const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: number, onClose: () => void, onFinish: () => void }) => {
+  const words = useMemo(() => text.split(/\s+/).filter(w => w.length > 0), [text]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [speed, setSpeed] = useState(wpm);
+  
+  useEffect(() => {
+    if (!isPlaying || currentIdx >= words.length) return;
+    
+    const interval = 60000 / speed;
+    const timer = setTimeout(() => {
+      setCurrentIdx(prev => prev + 1);
+    }, interval);
+    
+    return () => clearTimeout(timer);
+  }, [currentIdx, isPlaying, speed, words.length]);
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-3xl flex flex-col items-center justify-center animate-in fade-in duration-500">
+      <button onClick={onClose} className="absolute top-10 right-10 p-4 bg-secondary/50 rounded-full text-muted-foreground hover:bg-secondary transition-all active:scale-95 shadow-lg">
+        <XIcon size={24} />
+      </button>
+      
+      <div className="w-full max-w-lg px-8 flex flex-col items-center gap-20">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="bg-primary/10 px-4 py-1.5 rounded-full">
+            <span className="text-[10px] font-black uppercase tracking-widest text-primary">Mindful Reading Focus</span>
+          </div>
+          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest opacity-40">Day {Math.ceil((currentIdx+1)/words.length * 7)} • Word {currentIdx + 1} of {words.length}</p>
+        </div>
+
+        <div className="h-40 flex items-center justify-center w-full relative">
+          {/* Visual Guides */}
+          <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-primary/20 -translate-x-1/2 opacity-20" />
+          
+          <div className="text-5xl md:text-7xl font-black text-foreground tracking-tight animate-in zoom-in-95 duration-200">
+            {currentIdx < words.length ? words[currentIdx] : (
+              <div className="flex flex-col items-center gap-6 animate-in slide-in-from-bottom-4 duration-700">
+                <CheckCircleIcon size={64} className="text-success" />
+                <button onClick={onFinish} className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/30 active:scale-95 transition-all">Complete Session</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="w-full space-y-12 animate-in slide-in-from-bottom-10 duration-1000">
+          <div className="flex flex-col gap-4">
+            <div className="bg-secondary/30 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-primary transition-all duration-300"
+                style={{ width: `${(currentIdx / words.length) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-8">
+            <div className="flex-1 flex flex-col gap-3">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Pace Control</span>
+                <span className="text-[10px] font-black text-primary tabular-nums">{speed} WPM</span>
+              </div>
+              <input 
+                type="range" min="100" max="500" step="10" 
+                value={speed} onChange={e => setSpeed(parseInt(e.target.value))}
+                className="w-full accent-primary h-1 bg-secondary rounded-full appearance-none cursor-pointer"
+              />
+            </div>
+
+            <button 
+              onClick={() => setIsPlaying(!isPlaying)}
+              className="w-20 h-20 bg-primary text-primary-foreground rounded-[2rem] flex items-center justify-center shadow-2xl shadow-primary/20 active:scale-90 transition-all"
+            >
+              {isPlaying ? <XIcon size={32} /> : <div className="ml-1 w-0 h-0 border-t-[12px] border-t-transparent border-l-[20px] border-l-current border-b-[12px] border-b-transparent" />}
+            </button>
+            
+            <button 
+              onClick={() => setCurrentIdx(Math.max(0, currentIdx - 5))}
+              className="w-14 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center text-muted-foreground active:scale-90 transition-all shadow-sm"
+            >
+              <div className="rotate-180">
+                <CaretRightIcon size={24} weight="bold" />
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
