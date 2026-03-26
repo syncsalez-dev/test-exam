@@ -34,6 +34,8 @@ import {
   Copy,
   TerminalWindow,
   Gear,
+  SpeakerHigh,
+  SpeakerSlash,
   type IconProps
 } from 'phosphor-react';
 import type { ComponentType } from 'react';
@@ -87,3 +89,5 @@ export const LightningSlashIcon = wrap(LightningSlash);
 export const CopyIcon = wrap(Copy);
 export const TerminalWindowIcon = wrap(TerminalWindow);
 export const GearIcon = wrap(Gear);
+export const SpeakerHighIcon = wrap(SpeakerHigh);
+export const SpeakerSlashIcon = wrap(SpeakerSlash);

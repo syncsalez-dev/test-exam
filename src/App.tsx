@@ -41,6 +41,8 @@ import {
   CircleNotchIcon,
   CopyIcon,
   LightningSlashIcon,
+  SpeakerHighIcon,
+  SpeakerSlashIcon,
   cn
 } from './lib/icons/phosphor';
 
@@ -1276,37 +1278,82 @@ Output strictly in this JSON format:
 // --- SUBSIDIARY COMPONENTS ---
 
 const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: number, onClose: () => void, onFinish: () => void }) => {
-  const words = useMemo(() => text.split(/\s+/).filter(w => w.length > 0), [text]);
+  const chunks = useMemo(() => {
+    const rawWords = text.split(/\s+/).filter(w => w.length > 0);
+    const result: string[] = [];
+    let current: string[] = [];
+    let currentLen = 0;
+
+    rawWords.forEach(word => {
+      if ((currentLen + word.length > 22 && current.length > 0) || current.length >= 3) {
+        result.push(current.join(' '));
+        current = [word];
+        currentLen = word.length;
+      } else {
+        current.push(word);
+        currentLen += word.length + 1;
+      }
+      if (/[.!?]$/.test(word)) {
+        result.push(current.join(' '));
+        current = [];
+        currentLen = 0;
+      }
+    });
+    if (current.length > 0) result.push(current.join(' '));
+    return result;
+  }, [text]);
+
   const [currentIdx, setCurrentIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(wpm);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
   
   useEffect(() => {
-    if (!isPlaying || currentIdx >= words.length) return;
+    if (!isPlaying || currentIdx >= chunks.length) return;
     
-    const currentWord = words[currentIdx];
+    const currentChunk = chunks[currentIdx];
     let multiplier = 1;
 
-    // Sentence ends: long pause
-    if (/[.!?]$/.test(currentWord)) {
-      multiplier = 2.2;
+    // Phrase ends with strong punctuation: long pause
+    if (/[.!?]$/.test(currentChunk)) {
+      multiplier = 2.4;
     } 
-    // Clauses/Middle marks: medium pause
-    else if (/[,;:]$/.test(currentWord)) {
-      multiplier = 1.6;
+    // Phrase ends with middle markers: medium pause
+    else if (/[,;:]$/.test(currentChunk)) {
+      multiplier = 1.8;
     }
-    // Long words: slight pause
-    else if (currentWord.length > 8) {
-      multiplier = 1.2;
-    }
+    
+    // Auto-adjust for chunk length and audio sync
+    const baseInterval = (60000 / speed) * 2.2; 
+    const lengthFactor = isAudioEnabled ? 0.05 : 0.02;
+    multiplier *= (1 + (currentChunk.length * lengthFactor));
 
-    const interval = (60000 / speed) * multiplier;
     const timer = setTimeout(() => {
       setCurrentIdx(prev => prev + 1);
-    }, interval);
+    }, baseInterval * multiplier);
     
     return () => clearTimeout(timer);
-  }, [currentIdx, isPlaying, speed, words.length]);
+  }, [currentIdx, isPlaying, speed, chunks.length, isAudioEnabled, chunks]);
+
+  // Audio Sync Effect
+  useEffect(() => {
+    if (isAudioEnabled && isPlaying && currentIdx < chunks.length) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(chunks[currentIdx]);
+      // Slightly faster rate for chunks
+      utterance.rate = Math.max(0.6, Math.min(4, speed / 135));
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    }
+    
+    if (!isPlaying) {
+      window.speechSynthesis.cancel();
+    }
+  }, [currentIdx, isAudioEnabled, isPlaying, speed, chunks]);
+
+  useEffect(() => {
+    return () => window.speechSynthesis.cancel();
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-3xl flex flex-col items-center justify-center animate-in fade-in duration-500">
@@ -1319,20 +1366,42 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
           <div className="bg-primary/10 px-4 py-1.5 rounded-full">
             <span className="text-[10px] font-black uppercase tracking-widest text-primary">Mindful Reading Focus</span>
           </div>
-          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest opacity-40">Day {Math.ceil((currentIdx+1)/words.length * 7)} • Word {currentIdx + 1} of {words.length}</p>
+          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest opacity-40">Day {Math.ceil((currentIdx+1)/chunks.length * 7)} • Phrase {currentIdx + 1} of {chunks.length}</p>
         </div>
 
-        <div className="h-40 flex items-center justify-center w-full relative">
-          {/* Visual Guides */}
-          <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-primary/20 -translate-x-1/2 opacity-20" />
+        <div className="h-[400px] flex flex-col items-center justify-center w-full relative overflow-hidden">
+          {/* Scanning Line Guide */}
+          <div className="absolute top-1/2 left-4 right-4 h-px bg-primary/20 -translate-y-1/2" />
           
-          <div className="text-5xl md:text-7xl font-black text-foreground tracking-tight animate-in zoom-in-95 duration-200">
-            {currentIdx < words.length ? words[currentIdx] : (
-              <div className="flex flex-col items-center gap-6 animate-in slide-in-from-bottom-4 duration-700">
-                <CheckCircleIcon size={64} className="text-success" />
-                <button onClick={onFinish} className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/30 active:scale-95 transition-all">Complete Session</button>
+          <div className="flex flex-col items-center gap-12 w-full transition-all duration-500 ease-in-out">
+            {/* Previous Phrase */}
+            <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform -translate-y-4 select-none pointer-events-none">
+              {currentIdx > 0 ? chunks[currentIdx - 1] : <span className="opacity-0">Placeholder</span>}
+            </div>
+
+            {/* Current Focus Phrase */}
+            <div className="relative group">
+              <div className="text-4xl md:text-6xl font-black text-foreground tracking-tight transition-all duration-300 transform scale-100 text-center px-4 max-w-2xl px-8">
+                {currentIdx < chunks.length ? chunks[currentIdx] : (
+                  <div className="flex flex-col items-center gap-6 animate-in slide-in-from-bottom-4 duration-700">
+                    <CheckCircleIcon size={64} className="text-success" />
+                    <button onClick={onFinish} className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/30 active:scale-95 transition-all">Complete Session</button>
+                  </div>
+                )}
               </div>
-            )}
+              {/* Focus Markers */}
+              {currentIdx < chunks.length && (
+                <>
+                  <div className="absolute -left-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
+                  <div className="absolute -right-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
+                </>
+              )}
+            </div>
+
+            {/* Next Phrase */}
+            <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform translate-y-4 select-none pointer-events-none">
+              {currentIdx < chunks.length - 1 ? chunks[currentIdx + 1] : <span className="opacity-0">Placeholder</span>}
+            </div>
           </div>
         </div>
 
@@ -1341,7 +1410,7 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
             <div className="bg-secondary/30 h-1.5 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-primary transition-all duration-300"
-                style={{ width: `${(currentIdx / words.length) * 100}%` }}
+                style={{ width: `${(currentIdx / chunks.length) * 100}%` }}
               />
             </div>
           </div>
@@ -1358,17 +1427,26 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
                 className="w-full accent-primary h-1 bg-secondary rounded-full appearance-none cursor-pointer"
               />
             </div>
-
             <button 
               onClick={() => setIsPlaying(!isPlaying)}
-              className="w-20 h-20 bg-primary text-primary-foreground rounded-[2rem] flex items-center justify-center shadow-2xl shadow-primary/20 active:scale-90 transition-all"
+              className="w-16 h-16 bg-primary text-primary-foreground rounded-[1.5rem] flex items-center justify-center shadow-2xl shadow-primary/20 active:scale-90 transition-all"
             >
-              {isPlaying ? <XIcon size={32} /> : <div className="ml-1 w-0 h-0 border-t-[12px] border-t-transparent border-l-[20px] border-l-current border-b-[12px] border-b-transparent" />}
+              {isPlaying ? <XIcon size={24} /> : <div className="ml-1 w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-current border-b-[8px] border-b-transparent" />}
+            </button>
+
+            <button 
+              onClick={() => setIsAudioEnabled(!isAudioEnabled)}
+              className={cn(
+                "w-16 h-16 rounded-[1.5rem] flex items-center justify-center transition-all active:scale-90 border border-border/20 shadow-sm",
+                isAudioEnabled ? "bg-warning/10 text-warning border-warning/20" : "bg-secondary/40 text-muted-foreground"
+              )}
+            >
+              {isAudioEnabled ? <SpeakerHighIcon size={24} weight="fill" /> : <SpeakerSlashIcon size={24} />}
             </button>
             
             <button 
               onClick={() => setCurrentIdx(Math.max(0, currentIdx - 5))}
-              className="w-14 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center text-muted-foreground active:scale-90 transition-all shadow-sm"
+              className="w-16 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center text-muted-foreground active:scale-90 transition-all border border-border/20 shadow-sm"
             >
               <div className="rotate-180">
                 <CaretRightIcon size={24} weight="bold" />
