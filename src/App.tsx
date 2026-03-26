@@ -1314,16 +1314,9 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
     const currentChunk = chunks[currentIdx];
     let multiplier = 1;
 
-    // Phrase ends with strong punctuation: long pause
-    if (/[.!?]$/.test(currentChunk)) {
-      multiplier = 2.4;
-    } 
-    // Phrase ends with middle markers: medium pause
-    else if (/[,;:]$/.test(currentChunk)) {
-      multiplier = 1.8;
-    }
+    if (/[.!?]$/.test(currentChunk)) multiplier = 2.4;
+    else if (/[,;:]$/.test(currentChunk)) multiplier = 1.8;
     
-    // Auto-adjust for chunk length and audio sync
     const baseInterval = (60000 / speed) * 2.2; 
     const lengthFactor = isAudioEnabled ? 0.05 : 0.02;
     multiplier *= (1 + (currentChunk.length * lengthFactor));
@@ -1335,20 +1328,15 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
     return () => clearTimeout(timer);
   }, [currentIdx, isPlaying, speed, chunks.length, isAudioEnabled, chunks]);
 
-  // Audio Sync Effect
   useEffect(() => {
     if (isAudioEnabled && isPlaying && currentIdx < chunks.length) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(chunks[currentIdx]);
-      // Slightly faster rate for chunks
       utterance.rate = Math.max(0.6, Math.min(4, speed / 135));
       utterance.pitch = 1.0;
       window.speechSynthesis.speak(utterance);
     }
-    
-    if (!isPlaying) {
-      window.speechSynthesis.cancel();
-    }
+    if (!isPlaying) window.speechSynthesis.cancel();
   }, [currentIdx, isAudioEnabled, isPlaying, speed, chunks]);
 
   useEffect(() => {
@@ -1356,105 +1344,97 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: { text: string, wpm: n
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-3xl flex flex-col items-center justify-center animate-in fade-in duration-500">
-      <button onClick={onClose} className="absolute top-10 right-10 p-4 bg-secondary/50 rounded-full text-muted-foreground hover:bg-secondary transition-all active:scale-95 shadow-lg">
-        <XIcon size={24} />
-      </button>
-      
-      <div className="w-full max-w-lg px-8 flex flex-col items-center gap-20">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="bg-primary/10 px-4 py-1.5 rounded-full">
-            <span className="text-[10px] font-black uppercase tracking-widest text-primary">Mindful Reading Focus</span>
-          </div>
-          <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest opacity-40">Day {Math.ceil((currentIdx+1)/chunks.length * 7)} • Phrase {currentIdx + 1} of {chunks.length}</p>
-        </div>
-
-        <div className="h-[400px] flex flex-col items-center justify-center w-full relative overflow-hidden">
-          {/* Scanning Line Guide */}
-          <div className="absolute top-1/2 left-4 right-4 h-px bg-primary/20 -translate-y-1/2" />
-          
-          <div className="flex flex-col items-center gap-12 w-full transition-all duration-500 ease-in-out">
-            {/* Previous Phrase */}
-            <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform -translate-y-4 select-none pointer-events-none">
-              {currentIdx > 0 ? chunks[currentIdx - 1] : <span className="opacity-0">Placeholder</span>}
+    <div className="fixed inset-0 z-[200] bg-background/95 backdrop-blur-3xl overflow-y-auto python-scrollbar-hide animate-in fade-in duration-500">
+      <div className="min-h-full flex flex-col items-center justify-start py-20 px-8">
+        <div className="w-full max-w-lg flex flex-col items-center gap-12 md:gap-20">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="bg-primary/10 px-4 py-1.5 rounded-full">
+              <span className="text-[10px] font-black uppercase tracking-widest text-primary">Mindful Reading Focus</span>
             </div>
+            <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest opacity-40">Day {Math.ceil((currentIdx+1)/chunks.length * 7)} • Phrase {currentIdx + 1} of {chunks.length}</p>
+          </div>
 
-            {/* Current Focus Phrase */}
-            <div className="relative group">
-              <div className="text-4xl md:text-6xl font-black text-foreground tracking-tight transition-all duration-300 transform scale-100 text-center px-4 max-w-2xl px-8">
-                {currentIdx < chunks.length ? chunks[currentIdx] : (
-                  <div className="flex flex-col items-center gap-6 animate-in slide-in-from-bottom-4 duration-700">
-                    <CheckCircleIcon size={64} className="text-success" />
-                    <button onClick={onFinish} className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/30 active:scale-95 transition-all">Complete Session</button>
-                  </div>
+          <div className="h-[280px] md:h-[400px] flex flex-col items-center justify-center w-full relative overflow-hidden">
+            <div className="absolute top-1/2 left-4 right-4 h-px bg-primary/20 -translate-y-1/2" />
+            <div className="flex flex-col items-center gap-12 w-full transition-all duration-500 ease-in-out">
+              <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform -translate-y-4 select-none pointer-events-none">
+                {currentIdx > 0 ? chunks[currentIdx - 1] : <span className="opacity-0">Placeholder</span>}
+              </div>
+              <div className="relative group">
+                <div className="text-4xl md:text-6xl font-black text-foreground tracking-tight transition-all duration-300 transform scale-100 text-center px-4 max-w-2xl px-8">
+                  {currentIdx < chunks.length ? chunks[currentIdx] : (
+                    <div className="flex flex-col items-center gap-6 animate-in slide-in-from-bottom-4 duration-700">
+                      <CheckCircleIcon size={64} className="text-success" />
+                      <button onClick={onFinish} className="px-12 py-5 bg-primary text-primary-foreground rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/30 active:scale-95 transition-all">Complete Session</button>
+                    </div>
+                  )}
+                </div>
+                {currentIdx < chunks.length && (
+                  <>
+                    <div className="absolute -left-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
+                    <div className="absolute -right-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
+                  </>
                 )}
               </div>
-              {/* Focus Markers */}
-              {currentIdx < chunks.length && (
-                <>
-                  <div className="absolute -left-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
-                  <div className="absolute -right-8 top-1/2 -translate-y-1/2 w-1.5 h-12 bg-primary/40 rounded-full" />
-                </>
-              )}
-            </div>
-
-            {/* Next Phrase */}
-            <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform translate-y-4 select-none pointer-events-none">
-              {currentIdx < chunks.length - 1 ? chunks[currentIdx + 1] : <span className="opacity-0">Placeholder</span>}
+              <div className="text-xl md:text-2xl font-bold opacity-20 transition-all duration-700 transform translate-y-4 select-none pointer-events-none">
+                {currentIdx < chunks.length - 1 ? chunks[currentIdx + 1] : <span className="opacity-0">Placeholder</span>}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="w-full space-y-12 animate-in slide-in-from-bottom-10 duration-1000">
-          <div className="flex flex-col gap-4">
+          <div className="w-full space-y-12 animate-in slide-in-from-bottom-10 duration-1000">
             <div className="bg-secondary/30 h-1.5 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-primary transition-all duration-300"
                 style={{ width: `${(currentIdx / chunks.length) * 100}%` }}
               />
             </div>
-          </div>
 
-          <div className="flex items-center justify-between gap-8">
-            <div className="flex-1 flex flex-col gap-3">
-              <div className="flex justify-between items-center px-1">
-                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Pace Control</span>
-                <span className="text-[10px] font-black text-primary tabular-nums">{speed} WPM</span>
+            <div className="flex items-center justify-between gap-8">
+              <div className="flex-1 flex flex-col gap-3">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Pace Control</span>
+                  <span className="text-[10px] font-black text-primary tabular-nums">{speed} WPM</span>
+                </div>
+                <input 
+                  type="range" min="100" max="500" step="10" 
+                  value={speed} onChange={e => setSpeed(parseInt(e.target.value))}
+                  className="w-full accent-primary h-1 bg-secondary rounded-full appearance-none cursor-pointer"
+                />
               </div>
-              <input 
-                type="range" min="100" max="500" step="10" 
-                value={speed} onChange={e => setSpeed(parseInt(e.target.value))}
-                className="w-full accent-primary h-1 bg-secondary rounded-full appearance-none cursor-pointer"
-              />
+              <button 
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="w-16 h-16 bg-primary text-primary-foreground rounded-[1.5rem] flex items-center justify-center shadow-2xl shadow-primary/20 active:scale-90 transition-all"
+              >
+                {isPlaying ? <XIcon size={24} /> : <div className="ml-1 w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-current border-b-[8px] border-b-transparent" />}
+              </button>
+
+              <button 
+                onClick={() => setIsAudioEnabled(!isAudioEnabled)}
+                className={cn(
+                  "w-16 h-16 rounded-[1.5rem] flex items-center justify-center transition-all active:scale-90 border border-border/20 shadow-sm",
+                  isAudioEnabled ? "bg-warning/10 text-warning border-warning/20" : "bg-secondary/40 text-muted-foreground"
+                )}
+              >
+                {isAudioEnabled ? <SpeakerHighIcon size={24} weight="fill" /> : <SpeakerSlashIcon size={24} />}
+              </button>
+              
+              <button 
+                onClick={() => setCurrentIdx(Math.max(0, currentIdx - 5))}
+                className="w-16 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center text-muted-foreground active:scale-90 transition-all border border-border/20 shadow-sm"
+              >
+                <div className="rotate-180">
+                  <CaretRightIcon size={24} weight="bold" />
+                </div>
+              </button>
             </div>
-            <button 
-              onClick={() => setIsPlaying(!isPlaying)}
-              className="w-16 h-16 bg-primary text-primary-foreground rounded-[1.5rem] flex items-center justify-center shadow-2xl shadow-primary/20 active:scale-90 transition-all"
-            >
-              {isPlaying ? <XIcon size={24} /> : <div className="ml-1 w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-current border-b-[8px] border-b-transparent" />}
-            </button>
-
-            <button 
-              onClick={() => setIsAudioEnabled(!isAudioEnabled)}
-              className={cn(
-                "w-16 h-16 rounded-[1.5rem] flex items-center justify-center transition-all active:scale-90 border border-border/20 shadow-sm",
-                isAudioEnabled ? "bg-warning/10 text-warning border-warning/20" : "bg-secondary/40 text-muted-foreground"
-              )}
-            >
-              {isAudioEnabled ? <SpeakerHighIcon size={24} weight="fill" /> : <SpeakerSlashIcon size={24} />}
-            </button>
-            
-            <button 
-              onClick={() => setCurrentIdx(Math.max(0, currentIdx - 5))}
-              className="w-16 h-14 bg-secondary/50 rounded-2xl flex items-center justify-center text-muted-foreground active:scale-90 transition-all border border-border/20 shadow-sm"
-            >
-              <div className="rotate-180">
-                <CaretRightIcon size={24} weight="bold" />
-              </div>
-            </button>
           </div>
         </div>
       </div>
+
+      <button onClick={onClose} className="fixed top-6 right-6 p-2.5 bg-secondary/90 rounded-full text-muted-foreground hover:bg-secondary transition-all active:scale-95 shadow-xl backdrop-blur-md border border-border/10 z-[210]">
+        <XIcon size={18} />
+      </button>
     </div>
   );
 };
