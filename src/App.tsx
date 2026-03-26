@@ -25,21 +25,22 @@ import {
   CaretRightIcon, 
   WarningCircleIcon, 
   TargetIcon, 
-  LightningIcon, 
-  TimerIcon, 
-  CircleNotchIcon, 
-  PlusIcon, 
-  TrashIcon, 
+  LightningIcon,
+  XIcon,
+  TrendUpIcon,
+  GearIcon,
+  TerminalWindowIcon,
+  PlusIcon,
+  TrashIcon,
   ArrowLeftIcon,
   GraduationCapIcon,
   MagnifyingGlassIcon,
-  XIcon,
   StackIcon,
   ActivityIcon,
-  LightningSlashIcon,
+  TimerIcon,
+  CircleNotchIcon,
   CopyIcon,
-  TerminalWindowIcon,
-  InfoIcon,
+  LightningSlashIcon,
   cn
 } from './lib/icons/phosphor';
 
@@ -79,6 +80,8 @@ interface Question {
   attempts: number;
   correctCount: number;
   totalSecondsTaken: number;
+  lastActivityDate?: number;
+  feedback?: string; // New field for feedback
 }
 
 interface Subject {
@@ -86,7 +89,15 @@ interface Subject {
   name: string;
   questions: Question[];
   streak: number;
+  lastActivityDate?: number;
   createdAt: number;
+  config?: StudyConfig;
+}
+
+interface StudyConfig {
+  focusUnit: string; // 'all' or specific unit name
+  isRandomized: boolean;
+  dailyGoal?: number;
 }
 
 const App = () => {
@@ -95,12 +106,14 @@ const App = () => {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'quiz', 'stats', 'exam'
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [activeSubjectId, setActiveSubjectId] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPromptModal, setShowPromptModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [configSubjectId, setConfigSubjectId] = useState<string | null>(null);
+  const [studyConfig, setStudyConfig] = useState<StudyConfig>({ focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
   const [copyFeedback, setCopyFeedback] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Theme Awareness
   useEffect(() => {
     const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -128,7 +141,8 @@ const App = () => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  
+  const [feedback, setFeedback] = useState<string | null>(null); // New feedback state
+
   // Timer States
   const [quizTimer, setQuizTimer] = useState(QUESTION_TIMEOUT);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -143,7 +157,7 @@ const App = () => {
   const [examTimer, setExamTimer] = useState(1200);
   const [examResult, setExamResult] = useState<number | null>(null);
 
-  const generatorPrompt = `Prompt: I am attaching a course PDF. I need you to act as an expert educator and data engineer. 
+  const generatorPrompt = `Prompt: I am attaching a course PDF. I need you to act as an expert educator and data engineer.
 Your task is to build a repository of exam-relevant multiple-choice questions based EXCLUSIVELY on this material.
 
 Requirements:
@@ -211,7 +225,7 @@ Output strictly in this JSON format:
     if (view === 'quiz' && currentQuestionIndex !== null && !showExplanation) {
       setQuizTimer(QUESTION_TIMEOUT);
       setStartTime(Date.now());
-      
+
       quizIntervalRef.current = setInterval(() => {
         setQuizTimer((prev) => {
           if (prev <= 1) {
@@ -237,8 +251,29 @@ Output strictly in this JSON format:
     setActiveSubjectId(subject.id);
     const qs = subject.questions || [];
     setQuestions(qs);
+
+    // Load per-subject config or use default
+    if (subject.config) {
+      setStudyConfig(subject.config);
+    } else {
+      setStudyConfig({ focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
+    }
+
     setView('quiz');
     pickNextQuestion(qs);
+  };
+
+  const saveSubjectConfig = async (subjectId: string, newConfig: StudyConfig) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'subjects', subjectId), {
+        config: newConfig,
+        lastUpdated: Date.now()
+      }, { merge: true });
+      if (activeSubjectId === subjectId) {
+        setStudyConfig(newConfig);
+      }
+    } catch (err) { console.error(err); }
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -252,7 +287,7 @@ Output strictly in this JSON format:
         const json = JSON.parse(e.target.result as string);
         const subjectName = file.name.replace('.json', '').toUpperCase();
         const rawQuestions = Array.isArray(json) ? json : (json.questions || []);
-        
+
         if (rawQuestions.length === 0) return;
 
         const questionsToSave = rawQuestions.map((q: any, idx: number) => ({
@@ -262,7 +297,7 @@ Output strictly in this JSON format:
           nextReview: Date.now(),
           attempts: 0,
           correctCount: 0,
-          totalSecondsTaken: 0 
+          totalSecondsTaken: 0
         }));
 
         const subjectId = `subject_${Date.now()}`;
@@ -278,29 +313,34 @@ Output strictly in this JSON format:
     reader.readAsText(file);
   };
 
-  const saveActiveSubject = async (updatedQuestions: Question[]) => {
-    if (!activeSubjectId) return;
-    setIsSaving(true);
-    try {
-      await setDoc(doc(db, 'artifacts', appId, 'subjects', activeSubjectId), {
-        questions: updatedQuestions,
-        lastUpdated: Date.now()
-      }, { merge: true });
-    } finally {
-      setTimeout(() => setIsSaving(false), 500);
-    }
-  };
 
   const pickNextQuestion = (allQuestions = questions) => {
     if (!allQuestions || allQuestions.length === 0) {
       setCurrentQuestionIndex(null);
       return;
     }
-    const pool = allQuestions.filter(q => q.nextReview <= Date.now());
-    if (pool.length > 0) {
-      const randomIndex = Math.floor(Math.random() * pool.length);
-      const questionInMainList = allQuestions.findIndex(q => q.num === pool[randomIndex].num);
-      setCurrentQuestionIndex(questionInMainList);
+
+    // Filter by unit if configured
+    let pool = allQuestions;
+    if (studyConfig.focusUnit !== 'all') {
+      pool = allQuestions.filter(q => q.unit === studyConfig.focusUnit);
+    }
+
+    // Filter by due date
+    const duePool = pool.filter(q => q.nextReview <= Date.now());
+    
+    if (duePool.length > 0) {
+      // If randomized, pick a random one from the due pool
+      if (studyConfig.isRandomized) {
+        const randomIndex = Math.floor(Math.random() * duePool.length);
+        const questionInMainList = allQuestions.findIndex(q => q.num === duePool[randomIndex].num);
+        setCurrentQuestionIndex(questionInMainList);
+      } else {
+        // If not randomized, pick the first one from the due pool
+        const firstDue = duePool[0];
+        const questionInMainList = allQuestions.findIndex(q => q.num === firstDue.num);
+        setCurrentQuestionIndex(questionInMainList);
+      }
     } else {
       setCurrentQuestionIndex(null);
     }
@@ -319,10 +359,18 @@ Output strictly in this JSON format:
     setSelectedOption(index);
     const isCorrect = index === questions[currentQuestionIndex].correct;
     
+    // Feedback Logic
+    if (isCorrect) {
+      const messages = ["Great job!", "Excellent!", "You're on fire!", "Keep it up!", "Spot on!", "Brilliant!"];
+      setFeedback(messages[Math.floor(Math.random() * messages.length)]);
+      setTimeout(() => setFeedback(null), 2000);
+    }
+
     const updatedQuestions = [...questions];
     const q = updatedQuestions[currentQuestionIndex];
     q.attempts = (q.attempts || 0) + 1;
     q.totalSecondsTaken = (q.totalSecondsTaken || 0) + elapsed;
+    q.lastActivityDate = Date.now();
 
     if (isCorrect) {
       q.srsBox = Math.min((q.srsBox || 0) + 1, REVIEW_INTERVALS.length - 1);
@@ -334,7 +382,39 @@ Output strictly in this JSON format:
     q.nextReview = Date.now() + (REVIEW_INTERVALS[q.srsBox] * 60000);
     setQuestions(updatedQuestions);
     setShowExplanation(true);
-    saveActiveSubject(updatedQuestions);
+
+    // Update Streak & Activity
+    if (activeSubjectId) {
+      const subject = subjects.find(s => s.id === activeSubjectId);
+      if (subject) {
+        const lastActivity = subject.lastActivityDate ? new Date(subject.lastActivityDate) : null;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        let newStreak = subject.streak || 0;
+        
+        if (!lastActivity) {
+          newStreak = 1;
+        } else {
+          lastActivity.setHours(0, 0, 0, 0);
+          const diffInTime = today.getTime() - lastActivity.getTime();
+          const diffInDays = Math.round(diffInTime / (1000 * 3600 * 24));
+          
+          if (diffInDays === 1) {
+            newStreak += 1;
+          } else if (diffInDays > 1) {
+            newStreak = 1;
+          }
+        }
+        
+        setDoc(doc(db, 'artifacts', appId, 'subjects', activeSubjectId), {
+          questions: updatedQuestions,
+          streak: newStreak,
+          lastActivityDate: Date.now(),
+          lastUpdated: Date.now()
+        }, { merge: true });
+      }
+    }
   };
 
   const startExam = () => {
@@ -368,7 +448,15 @@ Output strictly in this JSON format:
     } catch (err) { console.error(err); }
   };
 
-  // --- DERIVED ---
+  // Derived States
+  const sortedSubjects = useMemo(() => {
+    return [...subjects].sort((a,b) => b.createdAt - a.createdAt);
+  }, [subjects]);
+
+  const filteredSubjects = useMemo(() => {
+    return sortedSubjects.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [sortedSubjects, searchTerm]);
+
   const currentQ = useMemo(() => {
     return (currentQuestionIndex !== null && questions[currentQuestionIndex]) ? questions[currentQuestionIndex] : null;
   }, [currentQuestionIndex, questions]);
@@ -390,9 +478,39 @@ Output strictly in this JSON format:
     };
   }, [questions]);
 
-  const filteredSubjects = useMemo(() => {
-    return subjects.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [subjects, searchTerm]);
+  const unitStats = useMemo(() => {
+    const stats: Record<string, {
+      unit: string;
+      total: number;
+      attempted: number;
+      correct: number;
+      totalTime: number;
+      masteryCount: number;
+      dueCount: number;
+    }> = {};
+
+    questions.forEach(q => {
+      const u = q.unit || 'Unknown';
+      if (!stats[u]) {
+        stats[u] = { unit: u, total: 0, attempted: 0, correct: 0, totalTime: 0, masteryCount: 0, dueCount: 0 };
+      }
+      stats[u].total += 1;
+      if (q.attempts > 0) {
+        stats[u].attempted += 1;
+        stats[u].correct += q.correctCount;
+        stats[u].totalTime += q.totalSecondsTaken || 0;
+      }
+      if (q.srsBox >= 4) stats[u].masteryCount += 1;
+      if (q.nextReview <= Date.now()) stats[u].dueCount += 1;
+    });
+
+    return Object.values(stats).map(s => ({
+      ...s,
+      score: s.attempted > 0 ? Math.round((s.correct / s.attempted) * 100) : 0,
+      mastery: Math.round((s.masteryCount / s.total) * 100),
+      avgTime: s.attempted > 0 ? (s.totalTime / s.attempted).toFixed(1) : '0.0'
+    })).sort((a, b) => a.score - b.score); // Show weak areas first
+  }, [questions]);
 
   if (authError) return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
@@ -421,7 +539,7 @@ Output strictly in this JSON format:
       <div className="min-h-screen flex flex-col relative overflow-hidden">
         
         {/* Header */}
-        <header className="px-6 py-6 bg-background sticky top-0 z-50 transition-all duration-300">
+        <header className="px-4 py-4 md:px-6 md:py-6 bg-background sticky top-0 z-50 transition-all duration-300">
           <div className="flex justify-between items-center h-14">
             <div className="flex items-center gap-3">
               {view !== 'dashboard' && (
@@ -433,28 +551,28 @@ Output strictly in this JSON format:
                 </button>
               )}
               <div>
-                <h1 className="text-[18px] font-black tracking-tight truncate max-w-[180px]">
+                <h1 className="text-[16px] md:text-[18px] font-black tracking-tight truncate max-w-[150px] md:max-w-[180px]">
                   {view === 'dashboard' ? 'test-Pal Sync' : subjects.find(s => s.id === activeSubjectId)?.name || 'Course'}
                 </h1>
                 <div className="flex items-center gap-2">
-                  <div className={cn("w-2 h-2 rounded-full animate-pulse", isSaving ? "bg-warning" : "bg-primary")} />
+                  <div className="w-2 h-2 rounded-full animate-pulse bg-primary" />
                   <p className="text-[10px] text-muted-foreground font-black uppercase tracking-wider">
-                    {isSaving ? 'Active Transfer' : 'Encrypted Library'}
+                    Encrypted Library
                   </p>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {view === 'dashboard' && (
+                  {view === 'dashboard' && (
                 <button 
                   onClick={() => setShowPromptModal(true)}
-                  className="p-3.5 bg-secondary dark:bg-card hover:bg-secondary/80 text-primary rounded-[1.25rem] transition-all active:scale-95 shadow-lg"
+                  className="p-3 bg-secondary dark:bg-card hover:bg-secondary/80 text-primary rounded-[1.25rem] transition-all active:scale-95 shadow-lg"
                   title="AI Prompt Generator"
                 >
-                  <TerminalWindowIcon size={20} />
+                  <TerminalWindowIcon size={18} />
                 </button>
               )}
-              <div className="w-11 h-11 bg-primary rounded-full flex items-center justify-center text-xs font-black text-primary-foreground shadow-2xl shadow-primary/10">
+              <div className="w-10 h-10 md:w-11 md:h-11 bg-primary rounded-full flex items-center justify-center text-xs font-black text-primary-foreground shadow-2xl shadow-primary/10">
                 {user.email ? user.email[0].toUpperCase() : 'U'}
               </div>
             </div>
@@ -487,7 +605,7 @@ Output strictly in this JSON format:
                       placeholder="Search for subjects & library..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full bg-transparent border-none rounded-full py-5 pl-14 pr-6 text-[16px] font-black focus:ring-0 transition-all placeholder:text-muted-foreground/30 relative z-10"
+                      className="w-full bg-transparent border-none rounded-full py-3.5 md:py-5 pl-12 md:pl-14 pr-6 text-[15px] md:text-[16px] font-black focus:ring-0 transition-all placeholder:text-muted-foreground/30 relative z-10"
                     />
                   </div>
                 </div>
@@ -503,44 +621,64 @@ Output strictly in this JSON format:
                       </p>
                     </div>
                   ) : (
-                    filteredSubjects.map((subject, idx) => {
-                      const mastery = Math.round((subject.questions?.filter(q => q.srsBox >= 4).length / (subject.questions?.length || 1)) * 100);
-                      const dueCount = subject.questions?.filter(q => (q.nextReview || 0) <= Date.now()).length || 0;
+                    filteredSubjects.map((subject: Subject, idx: number) => {
+                      const mastery = subject.questions.length > 0 ? Math.round((subject.questions.filter(q => q.srsBox > 0).length / subject.questions.length) * 100) : 0;
+                      const dueCount = subject.questions.filter(q => q.nextReview < Date.now()).length || 0;
 
                       return (
                         <div 
                           key={subject.id} 
                           onClick={() => selectSubject(subject)}
                           style={{ animationDelay: `${idx * 50}ms` }}
-                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-6 p-6 bg-secondary/30 dark:bg-card hover:bg-secondary/50 dark:hover:bg-accent/40 rounded-[2.5rem] transition-all cursor-pointer active:scale-[0.96] group relative shadow-lg hover:shadow-2xl mb-5"
+                          className="animate-in fade-in slide-in-from-bottom-2 flex items-center gap-3 md:gap-4 p-3 md:p-4 bg-secondary/30 dark:bg-card hover:bg-secondary/50 dark:hover:bg-accent/40 rounded-xl md:rounded-2xl transition-all cursor-pointer active:scale-[0.98] group relative shadow-md hover:shadow-xl mb-3 md:mb-4 border border-border/50"
                         >
                           <div className={cn(
-                            "w-16 h-16 rounded-[1.5rem] flex items-center justify-center shrink-0 transition-all duration-500 shadow-inner",
+                            "w-12 h-12 md:w-14 md:h-14 rounded-lg md:rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 shadow-inner",
                             dueCount > 0 ? "bg-warning/20" : "bg-background/80 dark:bg-muted"
                           )}>
                             {dueCount > 0 ? (
                               <div className="relative">
-                                <ClockIcon size={26} className="text-warning animate-pulse" />
-                                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-destructive border-4 border-background rounded-full" />
+                                <ClockIcon size={20} className="text-warning animate-pulse" />
+                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-destructive border-4 border-background rounded-full" />
                               </div>
-                            ) : <GraduationCapIcon size={26} className={cn("transition-colors", mastery > 80 ? "text-success" : "text-primary")} />}
+                            ) : <GraduationCapIcon size={20} className={cn("transition-colors", mastery > 80 ? "text-success" : "text-primary")} />}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-[16px] font-black text-foreground truncate group-hover:text-primary transition-colors tracking-tight">{subject.name}</h4>
-                            <div className="flex items-center gap-3 mt-2">
-                              <div className="flex-1 bg-background/50 dark:bg-muted h-2.5 rounded-full overflow-hidden">
+                          <div className="flex-1 min-w-0 pr-2">
+                            <h4 className="text-[14px] md:text-[15px] font-black text-foreground truncate group-hover:text-primary transition-colors tracking-tight uppercase">{subject.name}</h4>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              <div className="flex-1 bg-background/50 dark:bg-muted h-1.5 rounded-full overflow-hidden">
                                 <div 
                                   className={cn("h-full transition-all duration-1000 shadow-sm", mastery > 80 ? "bg-success" : "bg-primary")} 
                                   style={{ width: `${mastery}%` }}
                                 ></div>
                               </div>
-                              <span className="text-[11px] font-black text-muted-foreground/80 shrink-0 tabular-nums lowercase">{mastery}% master</span>
+                              <span className="text-[9px] md:text-[10px] font-black text-muted-foreground/80 shrink-0 tabular-nums uppercase">{mastery}% master</span>
                             </div>
-                            {dueCount > 0 && <p className="text-[10px] font-black text-warning uppercase mt-2.5 tracking-[0.1em]">{dueCount} reviews pending</p>}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+                              {dueCount > 0 && <p className="text-[9px] font-black text-warning uppercase tracking-[0.1em]">{dueCount} reviews pending</p>}
+                              {subject.streak > 0 && (
+                                <p className="text-[9px] font-black text-success uppercase tracking-[0.1em] flex items-center gap-1">
+                                  <TrendUpIcon size={12} weight="bold" /> {subject.streak} Day Streak
+                                </p>
+                              )}
+                            </div>
                           </div>
-                          <button onClick={(e) => deleteSubject(e, subject.id)} className="p-3 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-full">
-                            <TrashIcon size={18} />
-                          </button>
+                          <div className="flex gap-1 items-center">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfigSubjectId(subject.id);
+                                setStudyConfig(subject.config || { focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
+                                setShowSettingsModal(true);
+                              }}
+                              className="p-2 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-lg border border-border/20"
+                            >
+                              <GearIcon size={16} />
+                            </button>
+                            <button onClick={(e) => deleteSubject(e, subject.id)} className="p-2 opacity-100 md:opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all active:scale-90 bg-background/40 dark:bg-muted/40 rounded-lg border border-border/20">
+                              <TrashIcon size={16} />
+                            </button>
+                          </div>
                         </div>
                       );
                     })
@@ -550,7 +688,7 @@ Output strictly in this JSON format:
                 <div className="px-2 pt-6">
                   <button 
                     onClick={() => fileInputRef.current?.click()}
-                    className="group w-full py-8 bg-secondary/15 hover:bg-secondary/30 rounded-[2.5rem] flex flex-col items-center justify-center gap-3 transition-all active:scale-[0.97] border-2 border-dashed border-border/10"
+                    className="group w-full py-6 md:py-8 bg-secondary/15 hover:bg-secondary/30 rounded-[1.5rem] md:rounded-[2.5rem] flex flex-col items-center justify-center gap-3 transition-all active:scale-[0.97] border-2 border-dashed border-border/10"
                   >
                     <div className="w-12 h-12 bg-background rounded-full shadow-sm flex items-center justify-center group-hover:text-primary transition-colors">
                       <PlusIcon size={20} />
@@ -564,20 +702,39 @@ Output strictly in this JSON format:
             </div>
           ) : view === 'quiz' ? (
             <div className="p-6 animate-in slide-in-from-right duration-300 h-full flex flex-col relative">
-              <div className="mb-8">
-                <div className="flex justify-between items-end mb-2">
+              {/* Session Metrics Bar */}
+              <div className="flex items-center justify-between mb-8 animate-in fade-in duration-700">
+                <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Question Timer</span>
-                    {quizTimer <= 5 && <WarningCircleIcon size={12} className="text-destructive animate-pulse" />}
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.15em]">Daily Goal</span>
+                    <span className="text-[10px] font-black text-primary tabular-nums">{questions.filter(q => q.attempts > 0 && new Date(q.lastActivityDate || 0).toDateString() === new Date().toDateString()).length} / {studyConfig.dailyGoal || 10}</span>
                   </div>
-                  <span className={cn(
-                    "text-xs font-bold tabular-nums",
-                    quizTimer <= 5 ? 'text-destructive' : 'text-primary'
-                  )}>
-                    {quizTimer}s
-                  </span>
+                  <div className="w-32 h-1.5 bg-secondary rounded-full overflow-hidden border border-border/20">
+                    <div 
+                      className="h-full bg-primary transition-all duration-1000" 
+                      style={{ width: `${Math.min((questions.filter(q => q.attempts > 0 && new Date(q.lastActivityDate || 0).toDateString() === new Date().toDateString()).length / (studyConfig.dailyGoal || 10)) * 100, 100)}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden border border-border">
+
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.15em]">Timer</span>
+                    <span className={cn("text-xs font-black tabular-nums", quizTimer <= 5 ? 'text-destructive' : 'text-primary')}>
+                      {quizTimer}s
+                    </span>
+                  </div>
+                  <div className="bg-success/10 px-3 py-2 rounded-xl border border-success/20 flex items-center gap-2">
+                    <TrendUpIcon size={14} className="text-success" />
+                    <span className="text-[11px] font-black text-success uppercase">
+                      {subjects.find(s => s.id === activeSubjectId)?.streak || 0}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/30">
                   <div 
                     className={cn(
                       "h-full transition-all duration-1000",
@@ -589,18 +746,23 @@ Output strictly in this JSON format:
               </div>
 
               {currentQ ? (
-                <div className="space-y-8 pb-20">
-                  <div className="bg-secondary/40 dark:bg-card/60 rounded-[2.5rem] p-8 md:p-10 shadow-2xl shadow-primary/5 relative overflow-hidden group">
+                <div className="space-y-6 md:space-y-8 pb-20">
+                  <div className="bg-secondary/40 dark:bg-card/60 rounded-[1.5rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl shadow-primary/5 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-40 h-40 bg-primary/5 rounded-full -mr-20 -mt-20 blur-3xl opacity-50" />
-                    <div className="relative z-10 space-y-5">
+                    <div className="relative z-10 space-y-4 md:space-y-5">
                       <div className="flex gap-2">
-                        <span className="px-4 py-1.5 bg-primary/15 text-[10px] font-black text-primary rounded-full uppercase tracking-widest">UNIT {currentQ.unit || 'A'}</span>
-                        <span className="px-4 py-1.5 bg-background/50 dark:bg-muted/40 text-[10px] font-black text-muted-foreground rounded-full uppercase tracking-widest">SRS Box {currentQ.srsBox || 0}</span>
+                        <span className="px-3 md:px-4 py-1.5 bg-primary/15 text-[10px] font-black text-primary rounded-full uppercase tracking-widest">UNIT {currentQ.unit || 'A'}</span>
+                        <span className="px-3 md:px-4 py-1.5 bg-background/50 dark:bg-muted/40 text-[10px] font-black text-muted-foreground rounded-full uppercase tracking-widest">SRS Box {currentQ.srsBox || 0}</span>
                       </div>
-                      <h2 className="text-xl md:text-2xl font-black leading-tight text-foreground tracking-tight">
+                      <h2 className="text-lg md:text-2xl font-black leading-tight text-foreground tracking-tight">
                         {currentQ.q}
                       </h2>
                     </div>
+                    {feedback && (
+                      <div className="absolute inset-0 bg-primary/20 backdrop-blur-sm flex items-center justify-center animate-in fade-in zoom-in duration-300 z-20 pointer-events-none">
+                        <span className="text-2xl md:text-3xl font-black text-primary drop-shadow-lg">{feedback}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid gap-4">
@@ -615,7 +777,7 @@ Output strictly in this JSON format:
                           onClick={() => handleAnswer(i)} 
                           disabled={hasAnswered} 
                           className={cn(
-                            "w-full text-left p-6 rounded-[2rem] transition-all duration-300 active:scale-[0.98] flex items-center group relative overflow-hidden shadow-sm",
+                            "w-full text-left p-4 md:p-6 rounded-[1.25rem] md:rounded-[2rem] transition-all duration-300 active:scale-[0.98] flex items-center group relative overflow-hidden shadow-sm",
                             !hasAnswered ? "bg-secondary/25 hover:bg-secondary/40 dark:hover:bg-card/40" :
                             isCorrect ? "bg-success/20 shadow-lg shadow-success/10" :
                             isSelected ? "bg-destructive/20 shadow-lg shadow-destructive/10" :
@@ -623,7 +785,7 @@ Output strictly in this JSON format:
                           )}
                         >
                           <div className={cn(
-                            "w-11 h-11 shrink-0 flex items-center justify-center rounded-2xl font-black mr-5 text-sm transition-all duration-500 shadow-inner",
+                            "w-10 h-10 md:w-11 md:h-11 shrink-0 flex items-center justify-center rounded-2xl font-black mr-4 md:mr-5 text-sm transition-all duration-500 shadow-inner",
                             !hasAnswered ? "bg-card dark:bg-background text-muted-foreground group-hover:bg-primary/5 group-hover:text-primary" :
                             isCorrect ? "bg-success text-white scale-110 rotate-3 shadow-xl" : 
                             isSelected ? "bg-destructive text-white scale-110" : "bg-card/50 dark:bg-background/50 text-muted-foreground"
@@ -631,10 +793,10 @@ Output strictly in this JSON format:
                             {String.fromCharCode(65+i)}
                           </div>
                           <span className={cn(
-                            "flex-1 text-[16px] font-black leading-relaxed",
+                            "flex-1 text-[15px] md:text-[16px] font-black leading-relaxed",
                             hasAnswered && isCorrect ? "text-success" : "text-foreground"
                           )}>{opt}</span>
-                          {hasAnswered && isCorrect && <CheckCircleIcon size={26} weight="fill" className="text-success animate-in zoom-in-50 duration-500 ml-4" />}
+                          {hasAnswered && isCorrect && <CheckCircleIcon size={22} weight="fill" className="text-success animate-in zoom-in-50 duration-500 ml-4" />}
                         </button>
                       );
                     })}
@@ -719,7 +881,46 @@ Output strictly in this JSON format:
                     </div>
                  </div>
                </div>
-            </div>
+
+                <div className="space-y-4 pt-4">
+                  <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest ml-1">Unit Mastery Breakdown</h3>
+                  <div className="space-y-3">
+                    {unitStats.map((stat, idx) => (
+                      <div key={idx} className="bg-card p-4 rounded-2xl border border-border flex items-center gap-4">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-[10px]",
+                          stat.score > 80 ? "bg-success/10 text-success" : 
+                          stat.score > 50 ? "bg-primary/10 text-primary" : 
+                          "bg-destructive/10 text-destructive"
+                        )}>
+                          {stat.score}%
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center mb-1">
+                            <h4 className="text-xs font-bold text-foreground truncate uppercase tracking-tight">{stat.unit}</h4>
+                            <span className="text-[10px] text-muted-foreground font-medium">{stat.mastery}% Master</span>
+                          </div>
+                          <div className="w-full h-1 bg-secondary rounded-full overflow-hidden">
+                            <div 
+                              className={cn("h-full transition-all duration-1000", stat.score > 80 ? "bg-success" : stat.score > 50 ? "bg-primary" : "bg-destructive")} 
+                              style={{ width: `${stat.score}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="flex items-center justify-end gap-1.5 mb-0.5">
+                            <TimerIcon size={10} className="text-muted-foreground" />
+                            <span className="text-[10px] font-bold text-foreground tabular-nums">{stat.avgTime}s</span>
+                          </div>
+                          {stat.dueCount > 0 && (
+                            <span className="text-[9px] font-black text-warning uppercase">Due: {stat.dueCount}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+             </div>
           ) : (
             <div className="p-6 h-full flex flex-col items-center justify-center text-center space-y-8 animate-in fade-in">
               {!examActive && !examResult ? (
@@ -792,33 +993,111 @@ Output strictly in this JSON format:
                   <div className="p-2 bg-primary/10 rounded-lg">
                     <TerminalWindowIcon size={18} className="text-primary" />
                   </div>
-                  <h3 className="text-sm font-bold text-foreground">AI Data Generator</h3>
+                  <h3 className="text-sm font-bold text-foreground lowercase tracking-tight">AI Data Generator</h3>
                 </div>
                 <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-secondary rounded-full text-muted-foreground">
                   <XIcon size={20} />
                 </button>
               </div>
-              <div className="p-6 space-y-4">
-                <div className="bg-secondary/50 border border-border p-4 rounded-xl flex items-start gap-3">
-                  <InfoIcon size={16} className="text-primary shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Copy this prompt and paste it into Gemini or ChatGPT with your course PDF to generate compatible subjects.
-                  </p>
-                </div>
-                <div className="relative bg-secondary/30 border border-border rounded-xl p-4 overflow-hidden group">
-                  <pre className="text-[11px] text-muted-foreground leading-relaxed font-mono overflow-y-auto max-h-[220px] whitespace-pre-wrap pr-2">
-                    {generatorPrompt}
-                  </pre>
+              <div className="p-8 space-y-6">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Copy this prompt, then go to an AI tool (like ChatGPT or Claude) and upload your course PDF. It will generate the JSON content for your library.
+                </p>
+                <div className="bg-secondary/50 p-4 rounded-xl font-mono text-[10px] break-all text-muted-foreground/80 border border-border h-40 overflow-y-auto no-scrollbar">
+                  {generatorPrompt}
                 </div>
                 <button 
                   onClick={handleCopyPrompt}
-                  className={cn(
-                    "w-full py-4 rounded-xl font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all",
-                    copyFeedback ? 'bg-success text-success-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-95'
-                  )}
+                  className="w-full py-4 bg-primary text-primary-foreground rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-primary/20"
                 >
-                  {copyFeedback ? <CheckCircleIcon size={16} /> : <CopyIcon size={16} />}
-                  {copyFeedback ? 'Prompt Copied!' : 'Copy AI Prompt'}
+                  {copyFeedback ? <CheckCircleIcon size={18} /> : <CopyIcon size={18} />}
+                  {copyFeedback ? 'Prompt Copied' : 'Copy Generator Prompt'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Per-Subject Settings Modal */}
+        {showSettingsModal && configSubjectId && (
+          <div className="fixed inset-0 z-[100] flex items-end justify-center px-4 pb-10 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+            <div className="bg-card w-full max-w-sm rounded-[2rem] border border-border shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom duration-500">
+              <div className="p-6 border-b border-border flex justify-between items-center bg-secondary/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <GearIcon size={18} className="text-primary" />
+                  </div>
+                  <h3 className="text-sm font-bold text-foreground lowercase tracking-tight">
+                    {subjects.find(s => s.id === configSubjectId)?.name.substring(0, 15)}... Settings
+                  </h3>
+                </div>
+                <button onClick={() => setShowSettingsModal(false)} className="p-2 hover:bg-secondary rounded-full text-muted-foreground">
+                  <XIcon size={20} />
+                </button>
+              </div>
+              
+              <div className="p-8 space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest ml-1 text-primary">Target Topic Focus</label>
+                  <div className="bg-secondary/40 rounded-2xl border border-border/50 p-4">
+                    <select 
+                      value={studyConfig.focusUnit} 
+                      onChange={(e) => setStudyConfig(prev => ({ ...prev, focusUnit: e.target.value }))}
+                      className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0 pr-8"
+                    >
+                      <option value="all">Global (All Units)</option>
+                      {Array.from(new Set(subjects.find(s => s.id === configSubjectId)?.questions.map(q => q.unit))).filter(Boolean).sort().map(u => (
+                        <option key={String(u)} value={String(u)}>{String(u)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between bg-secondary/40 rounded-2xl border border-border/50 p-4">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest text-primary">Curriculum Shuffle</span>
+                    <span className="text-[11px] font-bold text-foreground opacity-60">Randomize question order</span>
+                  </div>
+                  <button 
+                    onClick={() => setStudyConfig(prev => ({ ...prev, isRandomized: !prev.isRandomized }))}
+                    className={cn(
+                      "w-12 h-6 rounded-full transition-all relative overflow-hidden",
+                      studyConfig.isRandomized ? "bg-primary" : "bg-muted"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
+                      studyConfig.isRandomized ? "right-1" : "left-1"
+                    )} />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center px-1">
+                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest text-primary">Daily Mastery Goal</label>
+                    <span className="text-xs font-black text-primary tabular-nums">{studyConfig.dailyGoal || 10} q's</span>
+                  </div>
+                  <div className="flex items-center gap-4 px-2">
+                    <input 
+                      type="range" 
+                      min="5" 
+                      max="50" 
+                      step="5"
+                      value={studyConfig.dailyGoal || 10}
+                      onChange={(e) => setStudyConfig(prev => ({ ...prev, dailyGoal: parseInt(e.target.value) }))}
+                      className="flex-1 accent-primary h-1.5 bg-secondary rounded-full appearance-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    saveSubjectConfig(configSubjectId, studyConfig);
+                    setShowSettingsModal(false);
+                  }}
+                  className="w-full py-5 bg-primary text-primary-foreground rounded-2xl font-bold transition-all active:scale-[0.98] shadow-lg shadow-primary/20 uppercase text-xs tracking-widest"
+                >
+                  Save Configuration
                 </button>
               </div>
             </div>

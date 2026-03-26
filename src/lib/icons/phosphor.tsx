@@ -33,6 +33,7 @@ import {
   LightningSlash,
   Copy,
   TerminalWindow,
+  Gear,
   type IconProps
 } from 'phosphor-react';
 import type { ComponentType } from 'react';
@@ -85,3 +86,4 @@ export const ActivityIcon = wrap(Activity);
 export const LightningSlashIcon = wrap(LightningSlash);
 export const CopyIcon = wrap(Copy);
 export const TerminalWindowIcon = wrap(TerminalWindow);
+export const GearIcon = wrap(Gear);
