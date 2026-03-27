@@ -105,4 +105,26 @@
     background-image: radial-gradient(circle at top center, hsl(var(--secondary) / 0.3), transparent 70%);
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+
+  /* Slim themed scrollbar — Webkit (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
 }

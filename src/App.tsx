@@ -9,12 +9,13 @@ import {
   type User 
 } from 'firebase/auth';
 import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  collection, 
-  deleteDoc 
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  collection,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   BookOpenIcon,
@@ -113,6 +114,8 @@ const App = () => {
   const [configSubjectId, setConfigSubjectId] = useState<string | null>(null);
   const [studyConfig, setStudyConfig] = useState<StudyConfig>({ focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const [dailyGoalReached, setDailyGoalReached] = useState(false);
+  const [examSkipped, setExamSkipped] = useState<Set<number>>(new Set()); // exam question indices
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Theme Awareness
@@ -162,6 +165,7 @@ const App = () => {
   const [examAnswers, setExamAnswers] = useState<number[]>([]);
   const [examTimer, setExamTimer] = useState(1200);
   const [examResult, setExamResult] = useState<number | null>(null);
+  const [examFocusUnits, setExamFocusUnits] = useState<string[]>([]); // empty = all units
 
   const generatorPrompt = `Prompt: I am attaching a course PDF. I need you to act as an expert educator and data engineer.
 Your task is to build a repository of exam-relevant multiple-choice questions based EXCLUSIVELY on this material.
@@ -213,7 +217,7 @@ Output strictly in this JSON format:
     return () => unsubscribe();
   }, []);
 
-  // 2. Fetch Subjects List
+  // 2. Fetch Subjects List + Reading Trainer Progress
   useEffect(() => {
     if (!user) return;
     const subjectsRef = collection(db, 'artifacts', appId, 'subjects');
@@ -223,6 +227,15 @@ Output strictly in this JSON format:
     }, (error) => {
       console.error("Firestore error:", error);
     });
+
+    // Load reading trainer progress
+    getDoc(doc(db, 'artifacts', appId, 'user', 'metadata')).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.readingTraining) setTrainingProgress(data.readingTraining);
+      }
+    }).catch(() => {});
+
     return () => unsubscribe();
   }, [user]);
 
@@ -246,6 +259,28 @@ Output strictly in this JSON format:
     }
     return () => clearInterval(quizIntervalRef.current);
   }, [view, currentQuestionIndex, showExplanation]);
+
+  // 4. Exam Timer Logic
+  useEffect(() => {
+    if (!examActive) return;
+    const interval = setInterval(() => {
+      setExamTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [examActive]);
+
+  // Auto-finish exam when timer hits 0 (separate effect avoids stale closure)
+  useEffect(() => {
+    if (examTimer === 0 && examActive) {
+      finishExam();
+    }
+  }, [examTimer]);
 
   const handleCopyPrompt = () => {
     navigator.clipboard.writeText(generatorPrompt);
@@ -334,19 +369,12 @@ Output strictly in this JSON format:
 
     // Filter by due date
     const duePool = pool.filter(q => q.nextReview <= Date.now());
-    
+
     if (duePool.length > 0) {
-      // If randomized, pick a random one from the due pool
-      if (studyConfig.isRandomized) {
-        const randomIndex = Math.floor(Math.random() * duePool.length);
-        const questionInMainList = allQuestions.findIndex(q => q.num === duePool[randomIndex].num);
-        setCurrentQuestionIndex(questionInMainList);
-      } else {
-        // If not randomized, pick the first one from the due pool
-        const firstDue = duePool[0];
-        const questionInMainList = allQuestions.findIndex(q => q.num === firstDue.num);
-        setCurrentQuestionIndex(questionInMainList);
-      }
+      const picked = studyConfig.isRandomized
+        ? duePool[Math.floor(Math.random() * duePool.length)]
+        : duePool[0];
+      setCurrentQuestionIndex(allQuestions.findIndex(q => q.num === picked.num));
     } else {
       setCurrentQuestionIndex(null);
     }
@@ -384,10 +412,19 @@ Output strictly in this JSON format:
     } else {
       q.srsBox = 0;
     }
-    
+
     q.nextReview = Date.now() + (REVIEW_INTERVALS[q.srsBox] * 60000);
     setQuestions(updatedQuestions);
     setShowExplanation(true);
+
+    // Daily goal check
+    const todayStr = new Date().toDateString();
+    const todayAnsweredCount = updatedQuestions.filter(q => q.attempts > 0 && new Date(q.lastActivityDate || 0).toDateString() === todayStr).length;
+    const goal = studyConfig.dailyGoal || 10;
+    if (todayAnsweredCount >= goal && !dailyGoalReached) {
+      setDailyGoalReached(true);
+      setTimeout(() => setDailyGoalReached(false), 4000);
+    }
 
     // Update Achievement Progress for Reading Trainer
     if (readingTrainerActive) {
@@ -430,10 +467,13 @@ Output strictly in this JSON format:
 
   const startExam = () => {
     if (questions.length === 0) return;
-    const pool = [...questions].sort(() => 0.5 - Math.random()).slice(0, Math.min(questions.length, 20));
+    const filtered = examFocusUnits.length === 0 ? questions : questions.filter(q => examFocusUnits.includes(q.unit));
+    const pool = [...filtered].sort(() => 0.5 - Math.random()).slice(0, Math.min(filtered.length, 20));
+    if (pool.length === 0) return;
     setExamQuestions(pool);
     setExamCurrentIdx(0);
     setExamAnswers([]);
+    setExamSkipped(new Set());
     setExamActive(true);
     setExamResult(null);
     setExamTimer(1200);
@@ -441,11 +481,37 @@ Output strictly in this JSON format:
 
   const finishExam = () => {
     let correct = 0;
+    const updatedQuestions = [...questions];
+
     examQuestions.forEach((q, i) => {
-      if (examAnswers[i] === q.correct) correct++;
+      const isCorrect = examAnswers[i] === q.correct;
+      if (isCorrect) correct++;
+
+      const mainIdx = updatedQuestions.findIndex(mq => mq.num === q.num);
+      if (mainIdx !== -1) {
+        const mq = updatedQuestions[mainIdx];
+        mq.attempts = (mq.attempts || 0) + 1;
+        mq.lastActivityDate = Date.now();
+        if (isCorrect) {
+          mq.srsBox = Math.min((mq.srsBox || 0) + 1, REVIEW_INTERVALS.length - 1);
+          mq.correctCount = (mq.correctCount || 0) + 1;
+        } else {
+          mq.srsBox = 0;
+        }
+        mq.nextReview = Date.now() + (REVIEW_INTERVALS[mq.srsBox] * 60000);
+      }
     });
+
+    setQuestions(updatedQuestions);
     setExamResult(Math.round((correct / (examQuestions.length || 1)) * 100));
     setExamActive(false);
+
+    if (activeSubjectId) {
+      setDoc(doc(db, 'artifacts', appId, 'subjects', activeSubjectId), {
+        questions: updatedQuestions,
+        lastUpdated: Date.now()
+      }, { merge: true });
+    }
   };
 
   const deleteSubject = async (e: React.MouseEvent, id: string) => {
@@ -483,7 +549,7 @@ Output strictly in this JSON format:
     const scoreVal = Math.round(avg * 100);
     return {
       score: scoreVal,
-      mastery: Math.round((questions.filter(q => q.srsBox >= 4).length / (questions.length || 1)) * 100),
+      mastery: Math.round((questions.filter(q => (q.srsBox || 0) >= 3).length / (questions.length || 1)) * 100),
       avgTime: (totalTime / (totalAttempts || 1)).toFixed(1),
       trend: scoreVal > 80 ? 'Mastery' : scoreVal > 50 ? 'Steady' : 'Action Required'
     };
@@ -494,6 +560,7 @@ Output strictly in this JSON format:
       unit: string;
       total: number;
       attempted: number;
+      totalAttempts: number;
       correct: number;
       totalTime: number;
       masteryCount: number;
@@ -503,11 +570,12 @@ Output strictly in this JSON format:
     questions.forEach(q => {
       const u = q.unit || 'Unknown';
       if (!stats[u]) {
-        stats[u] = { unit: u, total: 0, attempted: 0, correct: 0, totalTime: 0, masteryCount: 0, dueCount: 0 };
+        stats[u] = { unit: u, total: 0, attempted: 0, totalAttempts: 0, correct: 0, totalTime: 0, masteryCount: 0, dueCount: 0 };
       }
       stats[u].total += 1;
       if (q.attempts > 0) {
         stats[u].attempted += 1;
+        stats[u].totalAttempts += q.attempts;
         stats[u].correct += q.correctCount;
         stats[u].totalTime += q.totalSecondsTaken || 0;
       }
@@ -515,12 +583,20 @@ Output strictly in this JSON format:
       if (q.nextReview <= Date.now()) stats[u].dueCount += 1;
     });
 
-    return Object.values(stats).map(s => ({
-      ...s,
-      score: s.attempted > 0 ? Math.round((s.correct / s.attempted) * 100) : 0,
-      mastery: Math.round((s.masteryCount / s.total) * 100),
-      avgTime: s.attempted > 0 ? (s.totalTime / s.attempted).toFixed(1) : '0.0'
-    })).sort((a, b) => a.score - b.score); // Show weak areas first
+    return Object.values(stats).map(s => {
+      // accuracyScore: average per-question accuracy (correct/attempts per question)
+      const questionsInUnit = questions.filter(q => (q.unit || 'Unknown') === s.unit && (q.attempts || 0) > 0);
+      const accuracyScore = questionsInUnit.length > 0
+        ? Math.round((questionsInUnit.reduce((acc, q) => acc + ((q.correctCount || 0) / q.attempts), 0) / questionsInUnit.length) * 100)
+        : 0;
+      return {
+        ...s,
+        score: s.totalAttempts > 0 ? Math.round((s.correct / s.totalAttempts) * 100) : 0,
+        accuracyScore,
+        mastery: Math.round((s.masteryCount / s.total) * 100),
+        avgTime: s.totalAttempts > 0 ? (s.totalTime / s.totalAttempts).toFixed(1) : '0.0'
+      };
+    }).sort((a, b) => a.accuracyScore - b.accuracyScore); // Show weak areas first
   }, [questions]);
 
   if (authError) return (
@@ -702,7 +778,11 @@ Output strictly in this JSON format:
                     </div>
                   ) : (
                     filteredSubjects.map((subject: Subject, idx: number) => {
-                      const mastery = subject.questions.length > 0 ? Math.round((subject.questions.filter(q => q.srsBox > 0).length / subject.questions.length) * 100) : 0;
+                      const attemptedQs = subject.questions.filter(q => (q.attempts || 0) > 0);
+                      const mastery = attemptedQs.length > 0
+                        ? Math.round((attemptedQs.reduce((acc, q) => acc + ((q.correctCount || 0) / q.attempts), 0) / attemptedQs.length) * 100)
+                        : 0;
+                      const retainedCount = subject.questions.filter(q => (q.srsBox || 0) >= 3).length;
                       const dueCount = subject.questions.filter(q => q.nextReview < Date.now()).length || 0;
 
                       return (
@@ -732,7 +812,7 @@ Output strictly in this JSON format:
                                   style={{ width: `${mastery}%` }}
                                 ></div>
                               </div>
-                              <span className="text-[9px] md:text-[10px] font-black text-muted-foreground/80 shrink-0 tabular-nums uppercase">{mastery}% master</span>
+                              <span className="text-[9px] md:text-[10px] font-black text-muted-foreground/80 shrink-0 tabular-nums uppercase">{mastery}% score{retainedCount > 0 ? ` · ${retainedCount} locked` : ''}</span>
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
                               {dueCount > 0 && <p className="text-[9px] font-black text-warning uppercase tracking-[0.1em]">{dueCount} reviews pending</p>}
@@ -812,7 +892,7 @@ Output strictly in this JSON format:
                       </span>
                     </div>
                     <div className="w-px h-8 bg-border/40 mx-1" />
-                    <button 
+                    <button
                       onClick={() => {
                         if (currentQ) {
                           setTrainingText(currentQ.q + " . . . " + currentQ.explanation);
@@ -830,13 +910,26 @@ Output strictly in this JSON format:
                   </div>
               </div>
 
+              {dailyGoalReached && (
+                <div className="animate-in slide-in-from-top-4 fade-in duration-500 mb-4 p-4 bg-success/15 border border-success/30 rounded-2xl flex items-center gap-3">
+                  <div className="w-9 h-9 bg-success rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-success/30">
+                    <CheckCircleIcon size={20} weight="fill" className="text-white" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-black text-success uppercase tracking-widest">Daily Goal Reached!</p>
+                    <p className="text-[10px] text-success/70 font-medium">You hit {studyConfig.dailyGoal || 10} questions today. Keep going!</p>
+                  </div>
+                  <LightningIcon size={20} className="text-success ml-auto animate-pulse" />
+                </div>
+              )}
+
               <div className="mb-8">
                 <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/30">
-                  <div 
+                  <div
                     className={cn(
                       "h-full transition-all duration-1000",
                       quizTimer <= 5 ? 'bg-destructive' : 'bg-primary'
-                    )} 
+                    )}
                     style={{ width: `${(quizTimer / QUESTION_TIMEOUT) * 100}%` }}
                   ></div>
                 </div>
@@ -847,9 +940,38 @@ Output strictly in this JSON format:
                   <div className="bg-secondary/40 dark:bg-card/60 rounded-[1.5rem] md:rounded-[2.5rem] p-6 md:p-10 shadow-2xl shadow-primary/5 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 w-40 h-40 bg-primary/5 rounded-full -mr-20 -mt-20 blur-3xl opacity-50" />
                     <div className="relative z-10 space-y-4 md:space-y-5">
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-wrap items-center">
                         <span className="px-3 md:px-4 py-1.5 bg-primary/15 text-[10px] font-black text-primary rounded-full uppercase tracking-widest">UNIT {currentQ.unit || 'A'}</span>
-                        <span className="px-3 md:px-4 py-1.5 bg-background/50 dark:bg-muted/40 text-[10px] font-black text-muted-foreground rounded-full uppercase tracking-widest">SRS Box {currentQ.srsBox || 0}</span>
+                        <span className={cn(
+                          "px-3 md:px-4 py-1.5 text-[10px] font-black rounded-full uppercase tracking-widest",
+                          (currentQ.srsBox || 0) >= 4 ? "bg-success/15 text-success" :
+                          (currentQ.srsBox || 0) >= 2 ? "bg-primary/15 text-primary" :
+                          "bg-background/50 dark:bg-muted/40 text-muted-foreground"
+                        )}>
+                          {(['New','Learning','Familiar','Confident','Mastered','Expert'])[currentQ.srsBox || 0]}
+                        </span>
+                        {(currentQ.attempts || 0) > 0 && (
+                          <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">
+                            {Math.round(((currentQ.correctCount || 0) / currentQ.attempts) * 100)}% correct
+                          </span>
+                        )}
+                      </div>
+                      {/* Comprehension bar */}
+                      <div className="flex items-center gap-2 mt-1">
+                        <div className="flex gap-0.5">
+                          {[0,1,2,3,4,5].map(i => (
+                            <div
+                              key={i}
+                              className={cn(
+                                "w-5 h-1.5 rounded-full transition-all duration-500",
+                                i <= (currentQ.srsBox || 0)
+                                  ? (currentQ.srsBox || 0) >= 4 ? "bg-success" : (currentQ.srsBox || 0) >= 2 ? "bg-primary" : "bg-warning"
+                                  : "bg-secondary/60"
+                              )}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-[9px] font-bold text-muted-foreground">Understanding</span>
                       </div>
                       <h2 className="text-lg md:text-2xl font-black leading-tight text-foreground tracking-tight">
                         {currentQ.q}
@@ -944,6 +1066,18 @@ Output strictly in this JSON format:
             </div>
           ) : view === 'stats' ? (
              <div className="p-6 space-y-6 animate-in fade-in duration-500 pb-20">
+               {questions.length === 0 ? (
+                 <div className="flex flex-col items-center justify-center py-24 text-center gap-4 animate-in fade-in duration-700">
+                   <div className="w-16 h-16 bg-secondary/50 rounded-full flex items-center justify-center border border-border">
+                     <ChartBarIcon size={24} className="text-muted-foreground/40" />
+                   </div>
+                   <p className="text-sm font-bold text-foreground">No subject open</p>
+                   <p className="text-xs text-muted-foreground max-w-[200px] leading-relaxed">Go to the Library, open a subject, then come back here to see your metrics.</p>
+                   <button onClick={() => setView('dashboard')} className="mt-2 px-6 py-3 bg-primary text-primary-foreground rounded-full text-xs font-black uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-primary/20">
+                     Open Library
+                   </button>
+                 </div>
+               ) : (<>
                <div className="bg-card p-6 rounded-2xl border border-border">
                   <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Knowledge Efficiency</p>
                   <div className="flex items-baseline gap-2">
@@ -986,21 +1120,24 @@ Output strictly in this JSON format:
                       <div key={idx} className="bg-card p-4 rounded-2xl border border-border flex items-center gap-4">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-[10px]",
-                          stat.score > 80 ? "bg-success/10 text-success" : 
-                          stat.score > 50 ? "bg-primary/10 text-primary" : 
+                          stat.accuracyScore > 80 ? "bg-success/10 text-success" :
+                          stat.accuracyScore > 50 ? "bg-primary/10 text-primary" :
                           "bg-destructive/10 text-destructive"
                         )}>
-                          {stat.score}%
+                          {stat.accuracyScore}%
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-1">
                             <h4 className="text-xs font-bold text-foreground truncate uppercase tracking-tight">{stat.unit}</h4>
-                            <span className="text-[10px] text-muted-foreground font-medium">{stat.mastery}% Master</span>
+                            <span className={cn(
+                              "text-[10px] font-black",
+                              stat.accuracyScore >= 80 ? "text-success" : stat.accuracyScore >= 40 ? "text-primary" : "text-muted-foreground"
+                            )}>{stat.accuracyScore}% Accuracy</span>
                           </div>
-                          <div className="w-full h-1 bg-secondary rounded-full overflow-hidden">
-                            <div 
-                              className={cn("h-full transition-all duration-1000", stat.score > 80 ? "bg-success" : stat.score > 50 ? "bg-primary" : "bg-destructive")} 
-                              style={{ width: `${stat.score}%` }}
+                          <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className={cn("h-full transition-all duration-1000", stat.accuracyScore >= 80 ? "bg-success" : stat.accuracyScore >= 40 ? "bg-primary" : "bg-destructive/60")}
+                              style={{ width: `${stat.accuracyScore}%` }}
                             />
                           </div>
                         </div>
@@ -1009,6 +1146,9 @@ Output strictly in this JSON format:
                             <TimerIcon size={10} className="text-muted-foreground" />
                             <span className="text-[10px] font-bold text-foreground tabular-nums">{stat.avgTime}s</span>
                           </div>
+                          {stat.masteryCount > 0 && (
+                            <span className="text-[9px] font-black text-success uppercase block">{stat.masteryCount} retained</span>
+                          )}
                           {stat.dueCount > 0 && (
                             <span className="text-[9px] font-black text-warning uppercase">Due: {stat.dueCount}</span>
                           )}
@@ -1017,64 +1157,246 @@ Output strictly in this JSON format:
                     ))}
                   </div>
                 </div>
+             </>)}
              </div>
           ) : (
             <div className="p-6 h-full flex flex-col items-center justify-center text-center space-y-8 animate-in fade-in">
               {!examActive && !examResult ? (
-                <div className="space-y-8 max-w-xs mx-auto">
+                <div className="space-y-6 w-full max-w-xs mx-auto">
                   <div className="w-20 h-20 bg-warning/10 rounded-full flex items-center justify-center mx-auto border border-warning/20 shadow-xl shadow-warning/10">
                     <TimerIcon size={36} className="text-warning" />
                   </div>
-                  <h2 className="text-xl font-medium text-foreground mb-2 uppercase tracking-tighter">Mock Assessment</h2>
-                  <button 
-                    onClick={startExam} 
-                    className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-full transition-transform active:scale-95 text-sm uppercase tracking-wider shadow-lg shadow-primary/20"
-                  >
-                    Start Exam
-                  </button>
+                  <h2 className="text-xl font-medium text-foreground uppercase tracking-tighter">Mock Assessment</h2>
+                  <p className="text-xs text-muted-foreground">20 questions · 20 min timer</p>
+
+                  {questions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">Open a subject first to take a test.</p>
+                  ) : (<>
+                    {/* Unit checkbox selector */}
+                    {(() => {
+                      const allUnits = Array.from(new Set(questions.map(q => q.unit))).filter(Boolean).sort() as string[];
+                      const allSelected = examFocusUnits.length === 0;
+                      const selectedPool = allSelected ? questions : questions.filter(q => examFocusUnits.includes(q.unit));
+                      const qCount = Math.min(selectedPool.length, 20);
+                      return (
+                        <div className="bg-secondary/40 rounded-2xl border border-border/50 p-4 text-left space-y-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Select Units</p>
+                            <span className="text-[10px] font-black text-primary">{qCount} question{qCount !== 1 ? 's' : ''}</span>
+                          </div>
+
+                          {/* All toggle */}
+                          <button
+                            onClick={() => setExamFocusUnits([])}
+                            className={cn(
+                              "w-full flex items-center gap-3 p-2.5 rounded-xl transition-all",
+                              allSelected ? "bg-primary/15" : "hover:bg-secondary/60"
+                            )}
+                          >
+                            <div className={cn(
+                              "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all",
+                              allSelected ? "bg-primary border-primary" : "border-border"
+                            )}>
+                              {allSelected && <CheckCircleIcon size={12} weight="fill" className="text-primary-foreground" />}
+                            </div>
+                            <span className={cn("text-sm font-bold", allSelected ? "text-primary" : "text-foreground")}>All Units</span>
+                          </button>
+
+                          <div className="w-full h-px bg-border/40" />
+
+                          {/* Per-unit toggles */}
+                          <div className="space-y-1 max-h-48 overflow-y-auto no-scrollbar">
+                            {allUnits.map(u => {
+                              const checked = examFocusUnits.includes(u);
+                              const unitCount = questions.filter(q => q.unit === u).length;
+                              return (
+                                <button
+                                  key={u}
+                                  onClick={() => setExamFocusUnits(prev =>
+                                    prev.includes(u) ? prev.filter(x => x !== u) : [...prev, u]
+                                  )}
+                                  className={cn(
+                                    "w-full flex items-center gap-3 p-2.5 rounded-xl transition-all",
+                                    checked ? "bg-primary/15" : "hover:bg-secondary/60"
+                                  )}
+                                >
+                                  <div className={cn(
+                                    "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all",
+                                    checked ? "bg-primary border-primary" : "border-border"
+                                  )}>
+                                    {checked && <CheckCircleIcon size={12} weight="fill" className="text-primary-foreground" />}
+                                  </div>
+                                  <span className={cn("text-sm font-bold flex-1 text-left", checked ? "text-primary" : "text-foreground")}>{u}</span>
+                                  <span className="text-[10px] text-muted-foreground tabular-nums">{unitCount}q</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <button
+                      onClick={startExam}
+                      className="w-full bg-primary text-primary-foreground font-bold py-4 rounded-full transition-transform active:scale-95 text-sm uppercase tracking-wider shadow-lg shadow-primary/20"
+                    >
+                      Start Exam
+                    </button>
+                  </>)}
                 </div>
               ) : examActive ? (
-                <div className="w-full text-left space-y-6 pb-24">
-                  <div className="flex justify-between items-center bg-secondary p-4 rounded-xl border border-border">
-                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Q {examCurrentIdx + 1} / {examQuestions.length}</span>
-                    <span className="flex items-center text-warning text-sm font-bold tabular-nums">
-                      <ClockIcon size={16} className="mr-2" /> {Math.floor(examTimer/60)}:{(examTimer%60).toString().padStart(2,'0')}
+                <div className="w-full text-left space-y-5 pb-24">
+                  {/* Header: progress dots + timer */}
+                  <div className="flex justify-between items-center bg-secondary p-4 rounded-xl border border-border gap-3">
+                    <div className="flex flex-wrap gap-1 flex-1">
+                      {examQuestions.map((_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setExamCurrentIdx(i)}
+                          className={cn(
+                            "w-5 h-5 rounded-full text-[8px] font-black transition-all active:scale-90",
+                            i === examCurrentIdx
+                              ? "bg-primary text-primary-foreground scale-110 shadow-md"
+                              : examSkipped.has(i)
+                              ? "bg-warning/30 text-warning border border-warning/50"
+                              : examAnswers[i] !== undefined
+                              ? "bg-success/30 text-success"
+                              : "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {i + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="flex items-center text-warning text-sm font-bold tabular-nums shrink-0">
+                      <ClockIcon size={16} className="mr-1.5" />{Math.floor(examTimer/60)}:{(examTimer%60).toString().padStart(2,'0')}
                     </span>
                   </div>
+
+                  {/* Unit + skip indicator */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-primary bg-primary/10 px-3 py-1 rounded-full uppercase tracking-widest">
+                      {examQuestions[examCurrentIdx]?.unit || 'Q'} · {examCurrentIdx + 1}/{examQuestions.length}
+                    </span>
+                    {examSkipped.has(examCurrentIdx) && (
+                      <span className="text-[10px] font-black text-warning bg-warning/10 px-3 py-1 rounded-full uppercase tracking-widest">Skipped</span>
+                    )}
+                    {examSkipped.size > 0 && (
+                      <span className="text-[10px] font-bold text-muted-foreground ml-auto">{examSkipped.size} skipped</span>
+                    )}
+                  </div>
+
                   <h2 className="text-lg font-medium text-foreground leading-relaxed">{examQuestions[examCurrentIdx]?.q}</h2>
+
                   <div className="space-y-3">
                     {examQuestions[examCurrentIdx]?.options?.map((opt, i) => (
-                      <button 
-                        key={i} 
-                        onClick={() => {const newAns = [...examAnswers]; newAns[examCurrentIdx] = i; setExamAnswers(newAns);}} 
+                      <button
+                        key={i}
+                        onClick={() => {
+                          const newAns = [...examAnswers];
+                          newAns[examCurrentIdx] = i;
+                          setExamAnswers(newAns);
+                          // Answering removes the skip mark
+                          if (examSkipped.has(examCurrentIdx)) {
+                            setExamSkipped(prev => { const s = new Set(prev); s.delete(examCurrentIdx); return s; });
+                          }
+                        }}
                         className={cn(
                           "w-full text-left p-4 rounded-xl border text-sm font-medium transition-all",
-                          examAnswers[examCurrentIdx] === i ? 'bg-primary text-primary-foreground border-primary shadow-lg shadow-primary/20' : 'bg-card border-border text-foreground'
+                          examAnswers[examCurrentIdx] === i
+                            ? 'bg-primary text-primary-foreground border-primary shadow-lg shadow-primary/20'
+                            : 'bg-card border-border text-foreground'
                         )}
                       >
                         <span className="mr-3 opacity-50 font-bold">{String.fromCharCode(65+i)}</span>{opt}
                       </button>
                     ))}
                   </div>
-                  <div className="flex gap-3 pt-8">
-                    <button 
-                      onClick={() => setExamCurrentIdx(Math.max(0, examCurrentIdx-1))} 
-                      disabled={examCurrentIdx===0} 
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={() => setExamCurrentIdx(Math.max(0, examCurrentIdx - 1))}
+                      disabled={examCurrentIdx === 0}
                       className="flex-1 py-4 bg-secondary rounded-xl font-bold text-[11px] uppercase tracking-widest disabled:opacity-20 border border-border"
                     >
                       Prev
                     </button>
-                    {examCurrentIdx === examQuestions.length - 1 ? 
+                    <button
+                      onClick={() => {
+                        setExamSkipped(prev => new Set(prev).add(examCurrentIdx));
+                        setExamCurrentIdx(i => Math.min(i + 1, examQuestions.length - 1));
+                      }}
+                      className="flex-1 py-4 bg-warning/10 text-warning border border-warning/30 rounded-xl font-bold text-[11px] uppercase tracking-widest transition-all active:scale-95"
+                    >
+                      Skip
+                    </button>
+                    {examCurrentIdx === examQuestions.length - 1 ?
                       <button onClick={finishExam} className="flex-1 py-4 bg-success text-success-foreground rounded-xl font-bold text-[11px] uppercase tracking-widest">Finish</button> :
-                      <button onClick={() => setExamCurrentIdx(examCurrentIdx+1)} className="flex-1 py-4 bg-primary text-primary-foreground rounded-xl font-bold text-[11px] uppercase tracking-widest">Next</button>
+                      <button onClick={() => setExamCurrentIdx(examCurrentIdx + 1)} className="flex-1 py-4 bg-primary text-primary-foreground rounded-xl font-bold text-[11px] uppercase tracking-widest">Next</button>
                     }
                   </div>
                 </div>
               ) : (
-                <div className="space-y-10 py-10">
-                  <h2 className="text-5xl font-bold text-foreground tracking-tight">{examResult}%</h2>
-                  <p className="text-muted-foreground font-bold uppercase tracking-[0.2em] text-[10px]">Assessment Outcome</p>
-                  <button onClick={() => {setExamResult(null); setView('quiz');}} className="w-full py-4 bg-secondary rounded-full font-bold uppercase text-[11px] tracking-widest border border-border">Return to Library</button>
+                <div className="w-full text-left space-y-6 pb-24 animate-in fade-in duration-500">
+                  {/* Score header */}
+                  <div className={cn(
+                    "p-6 rounded-2xl text-center border",
+                    (examResult || 0) >= 70 ? "bg-success/10 border-success/30" : "bg-destructive/10 border-destructive/30"
+                  )}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">Assessment Outcome</p>
+                    <h2 className={cn("text-6xl font-black tracking-tight", (examResult || 0) >= 70 ? "text-success" : "text-destructive")}>{examResult}%</h2>
+                    <p className={cn("text-xs font-bold mt-2 uppercase tracking-wider", (examResult || 0) >= 70 ? "text-success" : "text-destructive")}>
+                      {(examResult || 0) >= 70 ? "Pass — Well done!" : "Keep practising — you'll get there"}
+                    </p>
+                    <div className="flex justify-center gap-6 mt-4">
+                      <div className="text-center">
+                        <p className="text-lg font-black text-success">{examQuestions.filter((q,i) => examAnswers[i] === q.correct).length}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase">Correct</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-lg font-black text-destructive">{examQuestions.filter((q,i) => examAnswers[i] !== q.correct).length}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase">Wrong</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-lg font-black text-warning">{examQuestions.filter((_,i) => examAnswers[i] === undefined).length}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase">Skipped</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Wrong answers review */}
+                  {examQuestions.some((q, i) => examAnswers[i] !== q.correct) && (
+                    <div className="space-y-3">
+                      <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest ml-1">Review — Questions You Missed</h3>
+                      {examQuestions.map((q, i) => {
+                        const isCorrect = examAnswers[i] === q.correct;
+                        if (isCorrect) return null;
+                        return (
+                          <div key={i} className="bg-card border border-destructive/20 rounded-2xl p-4 space-y-3">
+                            <div className="flex gap-2 items-start">
+                              <span className="text-[9px] font-black text-destructive bg-destructive/10 px-2 py-1 rounded-full uppercase shrink-0">Q{i+1} Wrong</span>
+                              <p className="text-sm font-bold text-foreground leading-snug">{q.q}</p>
+                            </div>
+                            {examAnswers[i] !== undefined && (
+                              <div className="flex items-start gap-2 bg-destructive/5 rounded-xl p-3">
+                                <XIcon size={14} className="text-destructive mt-0.5 shrink-0" />
+                                <p className="text-xs text-destructive font-medium">Your answer: <span className="font-bold">{q.options[examAnswers[i]]}</span></p>
+                              </div>
+                            )}
+                            <div className="flex items-start gap-2 bg-success/5 rounded-xl p-3">
+                              <CheckCircleIcon size={14} weight="fill" className="text-success mt-0.5 shrink-0" />
+                              <p className="text-xs text-success font-medium">Correct: <span className="font-bold">{q.options[q.correct]}</span></p>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed border-t border-border pt-3">{q.explanation}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <button onClick={() => {setExamResult(null); setView('quiz');}} className="w-full py-4 bg-secondary rounded-full font-bold uppercase text-[11px] tracking-widest border border-border">
+                    Return to Study
+                  </button>
                 </div>
               )}
             </div>
@@ -1137,14 +1459,15 @@ Output strictly in this JSON format:
                 <div className="space-y-3">
                   <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest ml-1 text-primary">Target Topic Focus</label>
                   <div className="bg-secondary/40 rounded-2xl border border-border/50 p-4">
-                    <select 
-                      value={studyConfig.focusUnit} 
+                    <select
+                      value={studyConfig.focusUnit}
                       onChange={(e) => setStudyConfig(prev => ({ ...prev, focusUnit: e.target.value }))}
-                      className="w-full bg-transparent border-none text-sm font-bold text-foreground focus:ring-0 p-0 pr-8"
+                      className="w-full border-none text-sm font-bold text-foreground focus:ring-0 p-0 pr-8"
+                      style={{ background: 'hsl(var(--card))', color: 'hsl(var(--foreground))' }}
                     >
-                      <option value="all">Global (All Units)</option>
+                      <option value="all" style={{ background: 'hsl(var(--card))', color: 'hsl(var(--foreground))' }}>Global (All Units)</option>
                       {Array.from(new Set(subjects.find(s => s.id === configSubjectId)?.questions.map(q => q.unit))).filter(Boolean).sort().map(u => (
-                        <option key={String(u)} value={String(u)}>{String(u)}</option>
+                        <option key={String(u)} value={String(u)} style={{ background: 'hsl(var(--card))', color: 'hsl(var(--foreground))' }}>{String(u)}</option>
                       ))}
                     </select>
                   </div>
