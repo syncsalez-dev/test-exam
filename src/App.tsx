@@ -77,13 +77,15 @@ interface Question {
   answer: string;
   explanation: string;
   page?: string;
+  source?: string;
+  exam_likelihood?: number;
   srsBox: number;
   nextReview: number;
   attempts: number;
   correctCount: number;
   totalSecondsTaken: number;
   lastActivityDate?: number;
-  feedback?: string; // New field for feedback
+  feedback?: string; 
 }
 
 interface Subject {
@@ -100,6 +102,7 @@ interface StudyConfig {
   focusUnit: string; // 'all' or specific unit name
   isRandomized: boolean;
   dailyGoal?: number;
+  prioritizeHighLikelihood?: boolean;
 }
 
 const App = () => {
@@ -112,7 +115,7 @@ const App = () => {
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [configSubjectId, setConfigSubjectId] = useState<string | null>(null);
-  const [studyConfig, setStudyConfig] = useState<StudyConfig>({ focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
+  const [studyConfig, setStudyConfig] = useState<StudyConfig>({ focusUnit: 'all', isRandomized: true, dailyGoal: 10, prioritizeHighLikelihood: true });
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [dailyGoalReached, setDailyGoalReached] = useState(false);
   const [examSkipped, setExamSkipped] = useState<Set<number>>(new Set()); // exam question indices
@@ -297,7 +300,7 @@ Output strictly in this JSON format:
     if (subject.config) {
       setStudyConfig(subject.config);
     } else {
-      setStudyConfig({ focusUnit: 'all', isRandomized: true, dailyGoal: 10 });
+      setStudyConfig({ focusUnit: 'all', isRandomized: true, dailyGoal: 10, prioritizeHighLikelihood: true });
     }
 
     setView('quiz');
@@ -334,6 +337,8 @@ Output strictly in this JSON format:
         const questionsToSave = rawQuestions.map((q: any, idx: number) => ({
           ...q,
           num: q.num || idx + 1,
+          source: q.source || 'user_upload',
+          exam_likelihood: q.exam_likelihood || 0,
           srsBox: 0,
           nextReview: Date.now(),
           attempts: 0,
@@ -371,9 +376,24 @@ Output strictly in this JSON format:
     const duePool = pool.filter(q => q.nextReview <= Date.now());
 
     if (duePool.length > 0) {
-      const picked = studyConfig.isRandomized
-        ? duePool[Math.floor(Math.random() * duePool.length)]
-        : duePool[0];
+      let picked;
+      if (studyConfig.prioritizeHighLikelihood) {
+        const highLikelihoodPool = duePool.filter(q => (q.exam_likelihood || 0) >= 4);
+        // 70% chance to pick from high likelihood if available
+        if (highLikelihoodPool.length > 0 && Math.random() < 0.7) {
+          picked = studyConfig.isRandomized
+            ? highLikelihoodPool[Math.floor(Math.random() * highLikelihoodPool.length)]
+            : highLikelihoodPool[0];
+        } else {
+          picked = studyConfig.isRandomized
+            ? duePool[Math.floor(Math.random() * duePool.length)]
+            : duePool[0];
+        }
+      } else {
+        picked = studyConfig.isRandomized
+          ? duePool[Math.floor(Math.random() * duePool.length)]
+          : duePool[0];
+      }
       setCurrentQuestionIndex(allQuestions.findIndex(q => q.num === picked.num));
     } else {
       setCurrentQuestionIndex(null);
@@ -468,7 +488,22 @@ Output strictly in this JSON format:
   const startExam = () => {
     if (questions.length === 0) return;
     const filtered = examFocusUnits.length === 0 ? questions : questions.filter(q => examFocusUnits.includes(q.unit));
-    const pool = [...filtered].sort(() => 0.5 - Math.random()).slice(0, Math.min(filtered.length, 20));
+    
+    let pool: Question[] = [];
+    if (studyConfig.prioritizeHighLikelihood) {
+      const highLikelihood = filtered.filter(q => (q.exam_likelihood || 0) >= 4).sort(() => 0.5 - Math.random());
+      const normalLikelihood = filtered.filter(q => (q.exam_likelihood || 0) < 4).sort(() => 0.5 - Math.random());
+      
+      // Aim for 50% high likelihood, up to 10 questions
+      const highCount = Math.min(highLikelihood.length, 10);
+      const normalCount = Math.min(normalLikelihood.length, 20 - highCount);
+      
+      pool = [...highLikelihood.slice(0, highCount), ...normalLikelihood.slice(0, normalCount)];
+      pool = pool.sort(() => 0.5 - Math.random()); // Shuffle the final mix
+    } else {
+      pool = [...filtered].sort(() => 0.5 - Math.random()).slice(0, Math.min(filtered.length, 20));
+    }
+
     if (pool.length === 0) return;
     setExamQuestions(pool);
     setExamCurrentIdx(0);
@@ -942,6 +977,12 @@ Output strictly in this JSON format:
                     <div className="relative z-10 space-y-4 md:space-y-5">
                       <div className="flex gap-2 flex-wrap items-center">
                         <span className="px-3 md:px-4 py-1.5 bg-primary/15 text-[10px] font-black text-primary rounded-full uppercase tracking-widest">UNIT {currentQ.unit || 'A'}</span>
+                        {(currentQ.exam_likelihood || 0) >= 4 && (
+                          <span className="px-3 md:px-4 py-1.5 bg-warning/20 text-[10px] font-black text-warning rounded-full uppercase tracking-widest animate-pulse border border-warning/30 flex items-center gap-1.5">
+                            <LightningIcon size={12} weight="fill" />
+                            High Likelihood
+                          </span>
+                        )}
                         <span className={cn(
                           "px-3 md:px-4 py-1.5 text-[10px] font-black rounded-full uppercase tracking-widest",
                           (currentQ.srsBox || 0) >= 4 ? "bg-success/15 text-success" :
@@ -1492,6 +1533,28 @@ Output strictly in this JSON format:
                   </button>
                 </div>
 
+                <div className="flex items-center justify-between bg-warning/5 rounded-2xl p-5 border border-warning/10 shadow-sm">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black text-warning uppercase tracking-widest">Priority Mode</span>
+                      <LightningIcon size={12} weight="fill" className="text-warning animate-pulse" />
+                    </div>
+                    <span className="text-[11px] font-bold text-foreground opacity-60 italic">Prioritize high-likelihood questions</span>
+                  </div>
+                  <button 
+                    onClick={() => setStudyConfig(prev => ({ ...prev, prioritizeHighLikelihood: !prev.prioritizeHighLikelihood }))}
+                    className={cn(
+                      "w-12 h-6 rounded-full transition-all relative overflow-hidden",
+                      studyConfig.prioritizeHighLikelihood ? "bg-warning" : "bg-muted"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-sm",
+                      studyConfig.prioritizeHighLikelihood ? "right-1" : "left-1"
+                    )} />
+                  </button>
+                </div>
+
                 <div className="space-y-3">
                   <div className="flex justify-between items-center px-1">
                     <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest text-primary">Daily Mastery Goal</label>
@@ -1570,6 +1633,7 @@ Output strictly in this JSON format:
           <ReadingTrainer 
             text={trainingText} 
             wpm={wpm} 
+            isHighLikelihood={subjects.flatMap(s => s.questions).some(q => (q.q + " . . . " + q.explanation === trainingText) && (q.exam_likelihood || 0) >= 4)}
             onClose={() => setReadingTrainerActive(false)}
             onFinish={() => {
               // Log progress

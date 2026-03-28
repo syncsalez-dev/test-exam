@@ -5,6 +5,7 @@ import {
   SpeakerHighIcon, 
   SpeakerSlashIcon, 
   CaretRightIcon,
+  LightningIcon,
   cn 
 } from './lib/icons/phosphor';
 
@@ -13,9 +14,10 @@ interface ReadingTrainerProps {
   wpm: number;
   onClose: () => void;
   onFinish: () => void;
+  isHighLikelihood?: boolean;
 }
 
-const ReadingTrainer = ({ text, wpm, onClose, onFinish }: ReadingTrainerProps) => {
+const ReadingTrainer = ({ text, wpm, onClose, onFinish, isHighLikelihood }: ReadingTrainerProps) => {
   const chunks = useMemo(() => {
     const rawWords = text.split(/\s+/).filter(w => w.length > 0);
     const result: string[] = [];
@@ -97,6 +99,12 @@ const ReadingTrainer = ({ text, wpm, onClose, onFinish }: ReadingTrainerProps) =
             <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest opacity-25">
               Phrase {currentIdx + 1} of {chunks.length}
             </p>
+            {isHighLikelihood && (
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-warning/20 border border-warning/30 rounded-full animate-pulse shadow-lg shadow-warning/10">
+                <LightningIcon size={12} weight="fill" className="text-warning" />
+                <span className="text-[9px] font-black text-warning uppercase tracking-widest">High Likelihood Focus</span>
+              </div>
+            )}
           </div>
 
           {/* Ultra-Wide, Dense Carousel Pane */}
